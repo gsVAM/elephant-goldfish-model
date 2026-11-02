@@ -71,8 +71,19 @@ def test_run_card_fields_are_present() -> None:
     assert text in PANELS, text
 
 
+def test_panel_file_is_claude_code_only_and_step_asks_nothing() -> None:
+  flat = " ".join(PANELS.split())
+  assert ("Claude Code only. In any other host skip this file: no `printenv`, "
+          "preflight, run card or panel question; run upstream's flow (Stages 5 "
+          "to 9, all reviewers).") in flat
+  assert ("When `Step` was passed, ask neither question: use the panel "
+          "`EGM_PANEL` names (default Focused), show it on the run card, and "
+          "continue.") in flat
+
+
 def test_lane_launch_and_safety_rules() -> None:
   flat = " ".join(LANE.split())
+  assert "first reason that applies: `host`" in flat
   for text in ("run_in_background: true", "review --host claude", "--timeout 1800",
                "cache/claudex-loop/claudex-loop", "codex login status",
                "Never start it from a subagent",

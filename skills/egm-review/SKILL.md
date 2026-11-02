@@ -104,7 +104,7 @@ If your harness has no subagent tool, stop and tell the user: a review in the sa
 
 ### Step 2: Curated Pipeline Preset Selection
 
-0.  **Run card & panel (fork)**: Read `resources/review_panels.md`. Read the
+0.  **Run card & panel (fork)**: Claude Code only. Read `resources/review_panels.md`. Read the
     configuration, run the Astra preflight it names, show the run card, then
     ask the review mode and the panel together as that file says. That prompt
     is the one exception to the single-question rule (constraint 11 and the
@@ -212,7 +212,8 @@ Once the semantic split and execution preset are confirmed:
         Readiness Test).
     *   **Panel (fork)**: When the panel is not Full, follow the routing table
         in `resources/review_panels.md` instead of the sequences above. In
-        Stages 7 and 9 pass `egm-review-loop` the panel's reviewers plus
+        every panel, at Stages 7 and 9 pass `egm-review-loop` the panel's
+        Claude reviewers (`resources/review_panels.md` section 4) plus
         `AstraLane`, `Stage`, `RunCard`, `GoldfishModel` and `GoldfishEffort`.
 
 --------------------------------------------------------------------------------
@@ -286,14 +287,16 @@ plain chat):
         `comprehension_report.md`.
     *   **Step 7 (Critic Review)**: Spawn `egm-synthesizer` (or direct
         subagents) with `Reviewers: [egm-design, egm-structural, egm-style]` on
-        `FeatureRange` → write `critic_report.md`.
+        `FeatureRange` → write `critic_report.md`. (fork) Use the panel's
+        reviewers from `resources/review_panels.md` section 4.
     *   **Step 8 (Intermediate Zoom Out)**: Spawn `egm-synthesizer` (or direct
         subagent) with `Reviewers: [egm-zoom-out]` on `full file` → write
         `intermediate_zoom_out_report.md`.
     *   **Step 9 (Implementation Readiness Test)**: Spawn `egm-synthesizer` (or
         direct subagents) with `Reviewers: [egm-implementation-readiness,
         egm-codebase-details, egm-style]` on `DetailedRange` → write
-        `implementation_readiness_report.md`.
+        `implementation_readiness_report.md`. (fork) Use the panel's reviewers
+        from `resources/review_panels.md` section 4.
 2.  **Cross-Stage Synthesis & Deduplication**:
     *   Collect all findings across the stage reports that ran, plus the Astra
         result or its `not run` reason (fork); name the stages the panel
@@ -365,7 +368,8 @@ plain chat):
 1.  **Invoke Antagonistic Review Loop**: Invoke `egm-review-loop` in-thread on
     `FeatureRange` with reviewers `[egm-design, egm-structural, egm-style]` and
     standards `{"egm-design": "feature-spec-standard", "egm-structural":
-    "feature-spec-standard"}`.
+    "feature-spec-standard"}`. (fork) Use the panel's reviewers from
+    `resources/review_panels.md` section 4.
 2.  **Notify User (No Chat Dumps)**: Notify user that findings are written to
     `critic_report.md` (give its path).
 3.  **Checkpoint Gate**: Present the Stage 7 gate:
@@ -393,7 +397,8 @@ plain chat):
     `DetailedRange` with reviewers `[egm-implementation-readiness,
     egm-codebase-details, egm-style]` and standards
     `{"egm-implementation-readiness": "implementation-readiness-standard",
-    "egm-codebase-details": "implementation-readiness-standard"}`.
+    "egm-codebase-details": "implementation-readiness-standard"}`. (fork) Use
+    the panel's reviewers from `resources/review_panels.md` section 4.
 2.  **Notify User (No Chat Dumps)**: Notify user that findings are written to
     `implementation_readiness_report.md` (give its path).
 3.  **Terminal Checkpoint Gate**: Present the Stage 9 terminal gate:

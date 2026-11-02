@@ -25,7 +25,7 @@ This repository is a modified version of [google/elephant-goldfish-model](https:
 - **Per-reviewer model and effort** for the Claude goldfish, from `EGM_GOLDFISH_MODEL` and `EGM_GOLDFISH_EFFORT`.
 - **Persisted dispositions.** `egm-resolve` writes your final decision per finding to `goldfish_dispositions_round_<n>.md`; a resumed Astra round reads it.
 
-**Prerequisites for the Astra lane** (without them the review runs Claude-only and says so): the claudex-loop plugin (2.1.0 or later) installed in Claude Code, Codex CLI 0.153.4 or later on `PATH`, `codex login` completed, and Python 3.10 or later as `python3`.
+**Prerequisites for the Astra lane** (without them the review runs Claude-only and says so): the claudex-loop plugin (2.1.0 or later) installed in Claude Code, Codex CLI 0.153.4 or later on `PATH`, `codex login` completed, and Python 3.10 or later as `python3`. Install claudex-loop with `claude plugin marketplace add chaseai-yt/claudex-loop` and `claude plugin install claudex-loop@claudex-loop`; the lane looks for the runner only under the `claudex-loop` marketplace name.
 
 **Configuration.** Environment variables, each checked against an allowlist before use; anything else is ignored with a warning and never reaches a shell command:
 
@@ -39,7 +39,7 @@ This repository is a modified version of [google/elephant-goldfish-model](https:
 | `EGM_GOLDFISH_MODEL` | `inherit` | `inherit`, `sonnet`, `opus`, `haiku`, `fable` |
 | `EGM_GOLDFISH_EFFORT` | `inherit` | `inherit`, `low`, `medium`, `high`, `xhigh`, `max` |
 
-**Data notice.** When the Astra lane runs, the whole target file, the review brief, any file your OS account can read that Astra opens, and your Codex `AGENTS.md` and memories go to OpenAI under the account `codex login status` reports. Set `EGM_ASTRA=off` or run `codex logout` to prevent this. Details: [docs/privacy.md](docs/privacy.md).
+**Data notice.** When the Astra lane runs, the whole target file, the review brief, any file your OS account can read that Astra opens, and your Codex `AGENTS.md` and memories go to OpenAI under the account `codex login status` reports. Set the variables in the `env` block of a Claude Code settings file (or your shell). `EGM_ASTRA=off` turns the lane off, but a repository's project settings can turn it back on; the hard opt-outs are `codex logout`, `EGM_ASTRA=off` in managed settings, or not installing claudex-loop. Details: [docs/privacy.md](docs/privacy.md).
 
 **Install from this fork** (Claude Code):
 
@@ -47,6 +47,8 @@ This repository is a modified version of [google/elephant-goldfish-model](https:
 claude plugin marketplace add gsVAM/elephant-goldfish-model
 claude plugin install egm@egm-astra
 ```
+
+If Google's plugin is installed, run `claude plugin disable egm@egm` (or uninstall it) first: both plugins are named `egm`.
 
 The marketplace is named `egm-astra` so it can coexist with Google's `egm` marketplace; the plugin keeps the name `egm` and the commands stay `/egm:egm-*`. To install for every Claude Code configuration folder on a machine (for example `~/.claude` and a folder chosen with `CLAUDE_CONFIG_DIR`), run both commands once per folder with `CLAUDE_CONFIG_DIR` set to it. Where managed settings come from the claude.ai admin console, a local managed-settings file is ignored, so an organization-wide install goes through the console. The claudex-loop plugin is installed separately by each user who wants the lane.
 

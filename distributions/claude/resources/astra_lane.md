@@ -15,8 +15,10 @@ are in `resources/review_panels.md`; `<ASTRA_MODEL>`, `<ASTRA_EFFORT>` and
 
 ## 1. Preflight (once per review)
 
-Skip this section and record `astra: not run (EGM_ASTRA=off)` when `EGM_ASTRA`
-is `off`. Otherwise run this as one foreground, read-only command:
+Check the host first, before any command: outside Claude Code record `astra:
+not run (host)` and skip this section. Skip it too, recording `astra: not run
+(EGM_ASTRA=off)`, when `EGM_ASTRA` is `off`. Otherwise run this as one
+foreground, read-only command:
 
     git rev-parse --show-toplevel 2>/dev/null || pwd
     find "${CLAUDE_CODE_PLUGIN_CACHE_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins}/cache/claudex-loop/claudex-loop" -maxdepth 5 \( -path '*/skills/claudex-loop/scripts/runner.py' -o -name .orphaned_at \) 2>/dev/null
@@ -34,11 +36,12 @@ Read the output:
 - `codex` must print a path, and `codex login status` must report a login
   (for example `Logged in using ChatGPT`).
 
-Record the lane as `not run` with the first reason that applies: `no
-claudex-loop runner`, `codex not on PATH`, `codex not logged in`, `sandbox`
-(your Bash runs in Claude Code's sandbox without the exceptions in
-`docs/claude.md`), `subagent` (you are a subagent or a workflow agent, see
-section 3), `host`. Tell the user in one line and continue with the Claude
+Record the lane as `not run` with the first reason that applies: `host` (not
+Claude Code, checked before any command), `no claudex-loop runner`, `codex not
+on PATH`, `codex not logged in`, `sandbox` (your Bash runs in Claude Code's
+sandbox without the exceptions in `docs/claude.md`), `subagent` (you are a
+subagent or a workflow agent, see section 3). Tell the user in one line and
+continue with the Claude
 reviewers only. Do not run the preflight again in this review. Python and the
 Codex CLI version are not probed: the runner reports those failures (section 5).
 
@@ -54,7 +57,7 @@ it yourself from this template; never copy a repository file into it. The
 runner appends it under the heading `HOST DISPOSITIONS / FIX REQUEST:`, so the
 first line says what it is.
 
-    EGM REVIEW BRIEF. <Round 1: This is a fresh review request, not a list of dispositions. | Round n: Re-review after the author's dispositions, listed at the end.>
+    EGM REVIEW BRIEF. <Fresh launch, any round: This is a fresh review request, not a list of dispositions. | Resumed round n: Re-review after the author's dispositions, listed at the end.>
     Stage: <7 Critic Review | 9 Implementation Readiness | full review>, round <n>.
     <one range line per reviewed range, from the table below>
     Read other lines as context only.
@@ -67,7 +70,7 @@ first line says what it is.
     fix = the change to the document text.
     Standards:
     <for each range line, the standard's file name and full text>
-    <Round n with resume only:>
+    <Resumed round n only:>
     DISPOSITIONS FROM ROUND <n-1>:
     <the full text of goldfish_dispositions_round_<n-1>.md>
 

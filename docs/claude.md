@@ -18,7 +18,9 @@ claude plugin install egm@egm-astra
 
 Enable the installed plugin with `claude plugin enable egm@egm-astra`. (The
 fork's marketplace is `egm-astra`; upstream's is `egm@egm`. The plugin name and
-the `/egm:` commands are the same.)
+the `/egm:` commands are the same.) If Google's plugin is installed, run
+`claude plugin disable egm@egm` (or uninstall it) first: both plugins are named
+`egm`.
 Start messages with `/egm:egm-brainstorm`, `/egm:egm-draft`, or `/egm:egm-review`.
 Skills retain `disable-model-invocation: true`: their absence from automatic
 skill discovery is expected. The `Skill` tool refuses these skills, so to run
@@ -66,6 +68,9 @@ the panels, run card and `EGM_*` variables are `resources/review_panels.md`.
   exists; Codex CLI 0.153.4 or later on `PATH`; `codex login` completed;
   Python 3.10 or later as `python3`. The plugins root is
   `$CLAUDE_CODE_PLUGIN_CACHE_DIR`, else `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins`.
+  Install claudex-loop with `claude plugin marketplace add chaseai-yt/claudex-loop`
+  and `claude plugin install claudex-loop@claudex-loop`; the lane looks for the
+  runner only under the `claudex-loop` marketplace name.
 - **Sandbox**: when `sandbox.enabled` is on, Codex needs network access to
   OpenAI and writes to `~/.codex`. Add the runner command to
   `sandbox.excludedCommands`, or the OpenAI domains to

@@ -65,8 +65,11 @@ scenarios:
             pattern: "(?i)not run"
             message: "The Astra lane must be recorded as not run with its reason."
           - type: "required_pattern"
-            pattern: "(?i)(clean|claude-only)"
+            pattern: "(?i)claude[ -]only"
             message: "A lane that did not run does not make the round unclean; the round is judged on the Claude reviewers."
+          - type: "forbidden_pattern"
+            pattern: "(?i)\\bnot clean\\b"
+            message: "A failed Astra lane must not make the round unclean."
 
   - scenario_id: "astra_medium_blocks_clean_round"
     description: "Verifies an Astra medium finding maps to Major and blocks a clean round."
