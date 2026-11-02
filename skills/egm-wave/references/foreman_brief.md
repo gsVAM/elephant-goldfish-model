@@ -84,7 +84,7 @@ run folder resumes at step 2; a round at `fetched` or `prepared`, or
    --comment`, lists the PR's reviews (`GH_HOST=github.com gh api
    repos/O/R/pulls/<n>/reviews --paginate --slurp`) so a comment with the
    same header is not posted twice, asks the user (post, edit, skip), and
-   posts with `GH_HOST=github.com gh pr review <n> -R O/R --comment --body-file '<path>'`.
+   re-reads the head with `GH_HOST=github.com gh pr view <n> -R O/R --json headRefOid`, posts only if it still equals the reviewed head (otherwise records `head-moved` and the next round starts on the new head), and posts with `GH_HOST=github.com gh pr review <n> -R O/R --comment --body-file '<path>'`.
    Never `--approve` or `--request-changes`.
 6. The elephant records the user's dispositions in
    `wave_dispositions_u<unit-id>_r<r>.md` (the five columns of

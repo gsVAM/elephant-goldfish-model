@@ -224,8 +224,16 @@ helper commands at once.
     first (`GH_HOST=github.com gh api repos/O/R/pulls/<n>/reviews --paginate
     --slurp`) so a
     comment with the same header is not posted twice. Ask one question
-    (post, edit, skip), then `GH_HOST=github.com gh pr review <n> -R O/R --comment --body-file
-    '<path>'`, one Bash approval. Record the user's dispositions in
+    (post, edit, skip). **Immediately before posting, re-read the head**:
+    `GH_HOST=github.com gh pr view <n> -R O/R --json headRefOid`. If it is not
+    the head the round reviewed (the `head <sha7>` in the report header), do
+    not post: the builder pushed during the review or the confirmation pause,
+    and findings, CI and DoD evidence from the old head would land on the new
+    one. Say so in one line, record the round as `head-moved`, and start the
+    next round against the new head. Only when the head is unchanged, post
+    with `GH_HOST=github.com gh pr review <n> -R O/R --comment --body-file
+    '<path>'`, one Bash approval; the comment's header names the reviewed
+    head, so the review is bound to the commit it judged. Record the user's dispositions in
     `wave_dispositions_u<id>_r<r>.md` with the five columns of
     `egm-resolve`'s table (from the user's decision, never the AI
     suggestion); the next round's brief carries the `astra-*` rows.

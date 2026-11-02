@@ -36,9 +36,10 @@ missing file means the defaults, and the dry run says so. Unknown keys stop.
 | `tracking_issue_title` | `Build: <design title>` | `<design title>` is replaced by the design's H1. |
 | `banned_terms` | `[]` | Regular expressions matched line by line outside code spans and fenced blocks, in every body and comment. A repository that must not name AI tools in GitHub text lists them here. |
 | `fix_request_mention` | none | `^@[A-Za-z0-9-]+(\[bot\])?$`. The one mention the scan allows, on the first line of a round comment, because coding-agent services act on PR feedback only when a comment mentions them. Never allowed in a body. |
+| `allowed_mentions` | `[]` | `@name` strings that may appear in any body or comment. The scan is **not code-aware** (seven review rounds each found a defect in a Markdown-aware version, which could both hide a mention and refuse ordinary text), so a legitimate `@scope/pkg` or `@decorator` must be listed here explicitly; otherwise a refusal names the line and the author rewords. |
 
-Fixed behaviour, not configuration: a bare `@name` outside code is refused
-(it notifies that user); CI is required; a merged PR is required for landed;
+Fixed behaviour, not configuration: a bare `@name` anywhere in the text is refused
+(it notifies that user; the scan does not exempt code); CI is required; a merged PR is required for landed;
 both PR-matching rules of the wave skill apply; the label colour is `1b6ef3`;
 derived labels are created without `--force` and existing labels are never
 edited.

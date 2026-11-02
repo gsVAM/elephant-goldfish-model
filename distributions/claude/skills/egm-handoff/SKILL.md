@@ -220,7 +220,8 @@ fails is retried once, then recorded `not run`.
     refuses while the plan's or the re-rendered bodies' sha256 differs from
     the gate's (`the plan, the config or the issue template changed after
     the gate: run the gate again`), refuses more than 100 units (`split the
-    handoff`), runs the scan (banned terms and bare mentions outside code,
+    handoff`), runs the scan (banned terms and bare mentions anywhere, code included -
+    legitimate ones go in `allowed_mentions`,
     merge markers, every definition-of-done item present, bodies under
     65,000 bytes), and makes three read-only `gh` calls (login, push access,
     the repository's labels; a configured `extra` label the repository

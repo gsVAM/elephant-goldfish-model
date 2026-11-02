@@ -66,6 +66,7 @@ DEFAULT_CONFIG = {
     "tracking_issue_title": "Build: <design title>",
     "banned_terms": [],
     "fix_request_mention": None,
+    "allowed_mentions": [],
 }
 
 DEFAULT_TEMPLATE = """<!-- egm:handoff={{handoff_id}} unit={{unit_id}} -->
@@ -305,6 +306,11 @@ def load_config(repo_root: Path) -> dict:
   mention = config["fix_request_mention"]
   if mention is not None and not MENTION_CONFIG_RE.match(mention):
     raise HandoffError(f"invalid fix_request_mention `{mention}`")
+  allowed = config["allowed_mentions"]
+  if not isinstance(allowed, list) or not all(
+      isinstance(a, str) and MENTION_CONFIG_RE.match(a) for a in allowed):
+    raise HandoffError("allowed_mentions must be a list of `@name` strings (the scan is not "
+                       "code-aware, so list the mentions that legitimately appear in text)")
   if not isinstance(config["banned_terms"], list):
     raise HandoffError("banned_terms must be a list of regular expressions")
   for term in config["banned_terms"]:
@@ -916,149 +922,37 @@ def normalise(body: str) -> str:
 # ---------------------------------------------------------------- scan
 
 
-# Narrowed deliberately: inspection rounds 1 to 5 each found a defect in a
-# cleverer version of this. A fence is a line indented at most three spaces
-# whose first non-space characters are the delimiter run, and nothing else. A
-# line indented four or more, or carrying a list bullet or a quote marker, is
-# NOT treated as a fence: in GFM it either is not one, or it is a container
-# shape this scanner does not model. Text not recognised as code is scanned,
-# and a fence that never closes refuses the whole text. Both directions fail
-# closed: the worst case is a refusal the author can act on, never a banned
-# term or a bare mention published to GitHub.
-FENCE_RE = re.compile(r"^ {0,3}(?P<fence>`{3,}|~{3,})(?P<info>.*)$")
-
-
-# A line whose first non-space run is a fence delimiter but which this scanner
-# does not model: indented four or more, or carried by a list bullet or a quote
-# marker. Relying on the unterminated-fence check to catch these was not enough
-# - an author can balance them and hide text between (round 6, R6-01).
-UNSUPPORTED_FENCE_RE = re.compile(
-    r"^(?:[ \t]*(?:[-*+>]|\d{1,9}[.)])[ \t]*|[ \t]{4,})[ \t]*(?:`{3,}|~{3,})")
-
-
-def unsupported_fence(text: str):
-  """The line number of the first fence form this scanner refuses, or None."""
-  for number, line in enumerate(text.splitlines(), start=1):
-    if UNSUPPORTED_FENCE_RE.match(line) and not FENCE_RE.match(line):
-      return number
-  return None
-
-
-def fence_delimiter(line: str):
-  """(char, length, info) when the line is a fence delimiter, else None."""
-  match = FENCE_RE.match(line)
-  if not match:
-    return None
-  return match.group("fence")[0], len(match.group("fence")), match.group("info")
-
-
-def strip_spans(line: str) -> str:
-  """Remove GFM code spans, leaving everything GitHub renders as text.
-
-  A span closes only on a backtick run of exactly the opening length, so an
-  opener of one backtick is not closed by a run of two. Anything that never
-  closes is not a span and must stay visible to the scanner."""
-  out, i, n = [], 0, len(line)
-  while i < n:
-    if line[i] == "\\" and i + 1 < n:
-      # A backslash escape: the next character is literal, so `\\`` never opens
-      # a code span and the text after it stays visible to the scanner.
-      out.append(line[i:i + 2])
-      i += 2
-      continue
-    if line[i] != "`":
-      out.append(line[i])
-      i += 1
-      continue
-    start = i
-    while i < n and line[i] == "`":
-      i += 1
-    length = i - start
-    j = i
-    while j < n:
-      if line[j] != "`":
-        j += 1
-        continue
-      run = j
-      while j < n and line[j] == "`":
-        j += 1
-      if j - run == length:
-        i = j
-        break
-    else:
-      out.append(line[start:])
-      return "".join(out)
-  return "".join(out)
-
-
-def strip_code(text: str):
-  """Yield (line number, text outside code spans and fenced blocks).
-
-  GFM closes a fence only with a run of the same character at least as long as
-  the opener, so a four-backtick block may contain a bare ``` line. Treating
-  every ``` as a toggle hid the rest of the body from the scanner, which is how
-  a banned term or a bare mention would reach GitHub."""
-  opener = None
-  for number, line in enumerate(text.splitlines(), start=1):
-    delim = fence_delimiter(line)
-    if opener is None:
-      if delim and "`" not in delim[2]:
-        opener = delim[0], delim[1]
-        yield number, ""
-        continue
-      yield number, strip_spans(line)
-      continue
-    char, length = opener
-    if delim and delim[0] == char and delim[1] >= length and not delim[2].strip():
-      opener = None
-    yield number, ""
-
-
-def unterminated_fence(text: str):
-  """The line number of a fence that never closes, or None."""
-  opener = None
-  for number, line in enumerate(text.splitlines(), start=1):
-    delim = fence_delimiter(line)
-    if opener is None:
-      if delim and "`" not in delim[2]:
-        opener = (delim[0], delim[1], number)
-      continue
-    char, length, _start = opener
-    if delim and delim[0] == char and delim[1] >= length and not delim[2].strip():
-      opener = None
-  return opener[2] if opener else None
-
-
 def scan_text(text: str, config: dict, kind: str, dod=None, label="body"):
+  """Refuse text that must not reach GitHub.
+
+  Deliberately NOT code-aware. Seven adversarial rounds each found a defect in
+  a Markdown-aware version (R12, R2-10, R3-08, R4-07, R5-02, R6-01, R7-01/02):
+  it could both hide a bare mention behind a fence shape it misread and refuse
+  an ordinary comment. GitHub does not notify for a mention inside code, so
+  code-awareness bought only false-positive avoidance - at the price of a
+  parser that was never right. Raw scan instead: every line, as written. A
+  legitimate `@scope/pkg` or `@decorator` goes in the repository's
+  `allowed_mentions`, which is explicit and reviewable; a refusal names the
+  line and the author rewords. That is the only safe direction to fail.
+  """
   problems = []
-  unsupported = unsupported_fence(text)
-  if unsupported is not None:
-    # Refuse rather than guess. A fence nested in a list or indented four
-    # spaces is a shape this scanner does not model, and an author can balance
-    # such delimiters so the unterminated check never fires.
-    problems.append(f"{label}:{unsupported}: a code fence here is indented or "
-                    f"inside a list or quote, which this scan does not model; "
-                    f"put the fence at the start of its own line, unindented")
-  unterminated = unterminated_fence(text)
-  if unterminated is not None:
-    # Fail closed: everything after an unclosed fence is hidden from the checks
-    # below, so refuse the text rather than pass it unscanned.
-    problems.append(f"{label}:{unterminated}: a code fence opens here and never "
-                    f"closes, so the rest of the text cannot be scanned; close it")
   size = len(text.encode("utf-8"))
   if size > BODY_LIMIT:
     problems.append(f"{label}: {size} bytes exceeds {BODY_LIMIT}: shorten or split the unit")
   terms = [re.compile(t) for t in config["banned_terms"]]
   mention = config.get("fix_request_mention")
-  for number, line in strip_code(text):
+  allowed = set(config.get("allowed_mentions") or [])
+  for number, line in enumerate(text.splitlines(), start=1):
     for term in terms:
       if term.search(line):
         problems.append(f"{label}:{number}: banned term /{term.pattern}/")
     for found in MENTION_RE.findall(line):
+      if found in allowed:
+        continue
       if kind == "comment" and number == 1 and mention and found == mention:
         continue
-      problems.append(f"{label}:{number}: bare mention {found} outside code (it would notify that user)")
-  for number, line in enumerate(text.splitlines(), start=1):
+      problems.append(f"{label}:{number}: bare mention {found} (it would notify that user; "
+                      f"reword it, or list it in `allowed_mentions` in .egm/handoff.json)")
     if re.match(r"^(<<<<<<<|=======|>>>>>>>)( |$)", line):
       problems.append(f"{label}:{number}: merge marker")
   for item in dod or []:
@@ -1325,7 +1219,8 @@ def cmd_dry_run(args):
   # what was confirmed, never with a plan re-parsed since.
   state["confirmed"] = {"sha256": confirmed, "repo": handoff.config["repo"],
                         "host": GH_HOSTNAME, "handoff_id": handoff.handoff_id,
-                        "writes": writes, "at": now_iso()}
+                        "writes": writes, "labels_config": dict(handoff.labels),
+                        "at": now_iso()}
   state["dry_run"] = {"labels": len(to_create), "issues": len(issues), "sub_issues": len(subs),
                       "blocked_by": len(blocked), "writes": total, "at": now_iso()}
   save_state(handoff.artifact_dir, state)
@@ -2097,6 +1992,22 @@ def cmd_defer(args):
   plan = locate(args)
   handoff = Handoff(plan)
   state, repo = handoff.state, require_repo(handoff)
+  # A deferral is a GitHub write against a filed issue: it gets the same guards
+  # as every other write, and it must name the label the issue actually
+  # carries, which is the one the dry run was confirmed with - not whatever
+  # `.egm/handoff.json` says today.
+  require_receipt(state)
+  require_confirmed_plan(handoff)
+  require_reviewed_pair(handoff)
+  recorded = (state.get("confirmed") or {}).get("labels_config")
+  if not recorded:
+    raise HandoffError("no labels_config in the confirmed snapshot: run dry-run and apply "
+                       "again before deferring (this handoff predates that record)")
+  if dict(handoff.labels) != recorded:
+    raise HandoffError(
+        f"the label configuration changed since this handoff was confirmed "
+        f"({recorded} -> {dict(handoff.labels)}); defer would strip the wrong label. "
+        f"Restore it in .egm/handoff.json.")
   record = state.get("units", {}).get(args.unit) or {}
   if not record.get("number"):
     raise HandoffError(f"{args.unit} has no issue number in the state")

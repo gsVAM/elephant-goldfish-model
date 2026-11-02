@@ -155,7 +155,7 @@ absolute paths in single quotes, no chaining. `<HELPER>` is
 | --- | --- | --- |
 | `approve --design D --artifacts DIR [--evidence E] [--yes]` | no | Checks the design (tracked and clean, has the implementation plan, the evidence names it) and prints the approval question; with `--yes` records the approval. |
 | `graph --plan P` | no | Parses, builds the graph, writes the files above. |
-| `scan --plan P [--comment FILE]` | no | Banned terms and bare mentions outside code, merge markers, size, every DoD item present. A comment file may carry the configured `fix_request_mention` on its first line. |
+| `scan --plan P [--comment FILE]` | no | Banned terms and bare mentions anywhere in the text (the scan is not code-aware; list legitimate ones in `allowed_mentions`), merge markers, size, every DoD item present. A comment file may carry the configured `fix_request_mention` on its first line. |
 | `gate --plan P --reviewed --round N` | no | Records the pair the round's reviewers read. |
 | `gate --plan P --pass [--what-ran L]...` | no | Passes only when nothing changed since the reviewed pair. |
 | `gate --plan P --accept [--what-ran L]...` | no | Accepts at the cap; writes `gate_unreviewed.diff` when the text changed. |

@@ -304,7 +304,15 @@ class FakeGitHub:
       return self.ok([{"total_count": len(runs), "check_runs": runs}])
     match = re.fullmatch(r"/commits/([0-9a-f]+)/status", rest)
     if match:
-      return self.ok(self.combined.get(match.group(1), {"state": "pending", "statuses": []}))
+      data = self.combined.get(match.group(1), {"state": "pending", "statuses": []})
+      if paginate:
+        # `--paginate --slurp` yields an array of pages. A fake that returned a
+        # dict here made read_ci iterate dict keys, collect nothing and fall
+        # back silently - so the pagination path was never exercised (R7-05).
+        assert "--slurp" in args, args
+        pages = data.get("pages") or [{"state": data["state"], "statuses": data.get("statuses", [])}]
+        return self.ok(pages)
+      return self.ok({"state": data["state"], "statuses": data.get("statuses", [])})
     raise AssertionError(args)
 
   def number_of(self, issue_id):
@@ -450,10 +458,13 @@ def test_config_defaults_and_remote_resolution(tmp_path, capsys):
 def test_scan_banned_terms_mentions_and_size(world):
   ns = world.ns
   config = {"banned_terms": ["(?i)secret-codename"], "fix_request_mention": "@copilot"}
-  assert ns["scan_text"]("plain `secret-codename` in code", config, "body") == []
+  # The scan is not code-aware (0.2.1): a banned term inside a code span is
+  # still refused, and the author rewords.
+  assert any("banned term" in p for p in ns["scan_text"]("plain `secret-codename` in code", config, "body"))
   assert any("banned term" in p for p in ns["scan_text"]("the secret-codename leaks", config, "body"))
   assert any("bare mention" in p for p in ns["scan_text"]("ask @alice please", config, "body"))
-  assert ns["scan_text"]("email a@b.example and `@alice`", config, "body") == []
+  assert ns["scan_text"]("email a@b.example only", config, "body") == []
+  assert any("bare mention" in p for p in ns["scan_text"]("email a@b.example and `@alice`", config, "body"))
   assert ns["scan_text"]("@copilot\n**EGM review round 1**", config, "comment") == []
   assert any("bare mention" in p for p in ns["scan_text"]("hello\n@copilot", config, "comment"))
   assert any("bare mention" in p for p in ns["scan_text"]("@copilot first", config, "body"))
@@ -1116,19 +1127,6 @@ def test_a_new_design_may_not_reuse_an_artifact_directory_with_issues(world):
   assert "already holds handoff" in out and "new artifact directory" in out
 
 
-def test_scanner_respects_fence_lengths(world):
-  """R12: GFM closes a fence only with a run at least as long as its opener, so
-  a four-backtick block may contain a bare ``` line."""
-  scan = world.ns["scan_text"]
-  config = {"banned_terms": ["(?i)secret-codename"], "fix_request_mention": None}
-  body = "````\n```\n````\n@alice and secret-codename\n"
-  problems = scan(body, config, "body")
-  assert any("bare mention @alice" in p for p in problems), problems
-  assert any("banned term" in p for p in problems), problems
-  # a genuine fenced block still hides its contents
-  assert scan("```\n@alice secret-codename\n```\n", config, "body") == []
-
-
 def test_duplicate_decision_ids_in_one_unit_are_refused(world):
   """R15: two blocking questions sharing an id share one state key, so
   answering the first would release the unit while the second is open."""
@@ -1292,20 +1290,6 @@ def test_an_unpublished_decision_does_not_release_the_unit(world):
   assert "open blocking decision U03/D2" not in out
 
 
-def test_code_span_runs_must_match_in_length(world):
-  """R2-10: a one-backtick opener is not closed by a two-backtick run, so the
-  text between them is rendered, not code."""
-  scan = world.ns["scan_text"]
-  config = {"banned_terms": ["(?i)secret-codename"], "fix_request_mention": None}
-  problems = scan("`@alice secret-codename``\n", config, "body")
-  assert any("bare mention" in p for p in problems), problems
-  assert any("banned term" in p for p in problems), problems
-  assert scan("`@alice secret-codename`\n", config, "body") == []
-  assert scan("``@alice secret-codename``\n", config, "body") == []
-  # an unclosed span is not a span
-  assert scan("`@alice secret-codename\n", config, "body") != []
-
-
 def test_repeated_deferrals_verify_against_the_current_wave(world):
   """R2-08: the initial wave is immutable; the current one moves with each
   authorised label edit."""
@@ -1426,16 +1410,6 @@ def test_verify_reports_a_link_the_handoff_no_longer_wants(world):
   assert code == 1 and "obsolete blocked-by link" in out, out
 
 
-def test_an_escaped_backtick_does_not_hide_text_from_the_scan(world):
-  """R3-08: GFM backslash escapes mean \\` is a literal backtick, so the text
-  after it is rendered, not code."""
-  scan = world.ns["scan_text"]
-  config = {"banned_terms": ["(?i)secret-codename"], "fix_request_mention": None}
-  problems = scan(r"\`@alice secret-codename\`" + "\n", config, "body")
-  assert any("bare mention" in p for p in problems), problems
-  assert any("banned term" in p for p in problems), problems
-
-
 def test_the_wave_skill_records_decision_publication(world):
   """R3-05: the helper gates on `published`, so a skill that never records it
   leaves every answered decision blocking its unit."""
@@ -1515,36 +1489,6 @@ def test_an_edit_the_bodies_do_not_show_still_blocks(world):
   assert "unit_<id>.md" in out
 
 
-def test_a_container_fence_is_refused_not_interpreted(world):
-  """R4-07/R5-02: five rounds each found a defect in a cleverer parser, so the
-  contract was narrowed instead. A fence nested in a list is a shape this
-  scanner does not model: it refuses the text rather than guessing."""
-  scan = world.ns["scan_text"]
-  config = {"banned_terms": ["(?i)secret-codename"], "fix_request_mention": None}
-  problems = scan("- ```\n  safe\n  ```\n\n@alice secret-codename\n", config, "comment")
-  assert problems, "a shape we do not model must never pass silently"
-  assert any("never closes" in p for p in problems), problems
-
-
-def test_an_indented_fence_does_not_hide_text_outside_it(world):
-  """R5-02: a four-space-indented ``` is an indented code block in GFM, not a
-  fence, so the paragraph between two of them is rendered and must be scanned."""
-  scan = world.ns["scan_text"]
-  config = {"banned_terms": ["(?i)secret-codename"], "fix_request_mention": None}
-  problems = scan("    ```\n\n@alice secret-codename\n\n    ```\n", config, "comment")
-  assert any("bare mention" in p for p in problems), problems
-  assert any("banned term" in p for p in problems), problems
-
-
-def test_an_unclosed_fence_fails_closed(world):
-  """R4-07: everything after an unclosed fence is invisible to the checks, so
-  refuse the text rather than pass it unscanned."""
-  scan = world.ns["scan_text"]
-  config = {"banned_terms": [], "fix_request_mention": None}
-  problems = scan("```\nnever closed\n", config, "body")
-  assert any("never closes" in p for p in problems), problems
-
-
 def test_an_answer_does_not_survive_its_question_changing(world):
   """R4-09: answers were keyed by unit/decision id alone, so an amendment that
   changed the question kept the old answer and its publication."""
@@ -1580,24 +1524,6 @@ def test_the_helper_is_single_writer_by_design(world):
 # --------------------------------------------- inspection round 6 regressions
 
 
-def test_a_balanced_container_fence_is_refused(world):
-  """R6-01: relying on the unterminated-fence check was not enough - an author
-  can balance an unsupported fence so it never fires, hiding the text between."""
-  scan = world.ns["scan_text"]
-  config = {"banned_terms": ["(?i)secret-codename"], "fix_request_mention": None}
-  problems = scan("- ```\n  safe\n  ```\n\n@alice secret-codename\n```\n", config, "comment")
-  assert problems, "a balanced unsupported fence must not pass"
-  assert any("does not model" in p for p in problems), problems
-
-
-def test_an_ordinary_body_with_a_normal_fence_is_accepted(world):
-  """The narrowed scanner must still allow text a reasonable author writes:
-  a refusal on ordinary input would make it unusable even though it is safe."""
-  scan = world.ns["scan_text"]
-  config = {"banned_terms": ["(?i)secret-codename"], "fix_request_mention": None}
-  assert scan("Do this:\n\n```sh\nnpm test\n```\n\nThen ship.\n", config, "body") == []
-
-
 def test_apply_refuses_a_body_invisible_plan_edit(world):
   """R6-02: the guard was added next to a scan_handoff call that lives in
   cmd_dry_run, so apply - where the writes happen - never had it."""
@@ -1627,16 +1553,22 @@ def test_prepare_refuses_a_unit_file_the_plan_does_not_render(world):
 
 
 def test_ci_reads_every_page_of_status_contexts(world):
-  """R6-04: that endpoint returns 30 contexts by default, so a failing context
-  beyond the first page was invisible while the aggregate said failure."""
-  calls = [c for c in []]
+  """R6-04/R7-05: the endpoint returns 30 contexts a page. A pending context
+  on page 2 means CI is still running even though page 1 is all green and the
+  aggregate says failure - and the fake now returns real pages, so removing
+  the pagination branch would fail this test."""
   gh = applied(world)
   head = "a" * 40
-  gh.combined[head] = {"state": "failure", "statuses": [{"state": "success"}]}
+  gh.combined[head] = {
+      "state": "failure",
+      "pages": [{"state": "failure", "statuses": [{"context": "lint", "state": "success"}]},
+                {"state": "failure", "statuses": [{"context": "e2e", "state": "pending"}]}],
+  }
   make_pr(gh, 70, head, closes=[(REPO, 2)])
   assert world.run("status", "--plan", world.plan, "--watch", "U01=70")[0] == 0
   code, out = world.run("status", "--plan", world.plan)
-  assert "ci green" not in out, out
+  assert "waiting-for-ci" in out, out
+  assert "ci green" not in out and "ci red" not in out, out
 
 
 def test_collect_accepts_a_round_whose_lane_never_launched(world):
@@ -1654,3 +1586,56 @@ def test_collect_accepts_a_round_whose_lane_never_launched(world):
   saved = json.loads((world.artifacts / "foreman_U01_state.json").read_text(encoding="utf-8"))
   assert saved["rounds"]["1"]["phase"] == "collected"
   assert "not run (lane off)" in saved["rounds"]["1"]["run_status"]
+
+
+# ------------------------------------------------ 0.2.1: the scan is raw text
+
+
+def test_scan_is_not_code_aware(world):
+  """Seven review rounds each found a defect in a Markdown-aware scanner; it
+  could both hide a mention behind a fence shape it misread and refuse an
+  ordinary comment. The code-awareness was deleted. Every line is scanned as
+  written, fences and spans included."""
+  scan = world.ns["scan_text"]
+  config = {"banned_terms": ["(?i)secret-codename"], "fix_request_mention": None,
+            "allowed_mentions": []}
+  for body in ("```\n@alice secret-codename\n```\n",
+               "`@alice` and `secret-codename`\n",
+               "- ```\n  safe\n  ```\n\n@alice secret-codename\n```\n",
+               "<div></div>\n```\n\n@alice secret-codename\n\n```\n",
+               "    ```\n\n@alice secret-codename\n\n    ```\n"):
+    problems = scan(body, config, "comment")
+    assert any("bare mention @alice" in p for p in problems), (body, problems)
+    assert any("banned term" in p for p in problems), (body, problems)
+  assert "strip_code" not in world.ns and "FENCE_RE" not in world.ns
+
+
+def test_an_ordinary_body_with_a_fence_and_no_mention_passes(world):
+  scan = world.ns["scan_text"]
+  config = {"banned_terms": ["(?i)secret-codename"], "fix_request_mention": None,
+            "allowed_mentions": []}
+  assert scan("Do this:\n\n```sh\nnpm test\n```\n\nThen ship.\n", config, "body") == []
+  assert scan("```diff\n- ```sh\n+ ```bash\n```\n", config, "comment") == []
+
+
+def test_allowed_mentions_are_explicit_and_validated(world):
+  scan = world.ns["scan_text"]
+  config = {"banned_terms": [], "fix_request_mention": None,
+            "allowed_mentions": ["@types"]}
+  assert scan("import from @types/node\n", config, "body") == []
+  problems = scan("ping @alice and @types/node\n", config, "body")
+  assert [p for p in problems if "@alice" in p] and not [p for p in problems if "@types" in p]
+  assert any("allowed_mentions" in p for p in problems), problems
+  # the config refuses anything that is not an @name
+  (world.repo / ".egm/handoff.json").write_text(
+      json.dumps({"repo": REPO, "allowed_mentions": ["types"]}), encoding="utf-8")
+  code, out = world.run("graph", "--plan", world.plan)
+  assert code == 1 and "allowed_mentions must be a list of `@name` strings" in out
+
+
+def test_fix_request_mention_still_passes_only_on_a_comment_first_line(world):
+  scan = world.ns["scan_text"]
+  config = {"banned_terms": [], "fix_request_mention": "@devin", "allowed_mentions": []}
+  assert scan("@devin please fix\n", config, "comment") == []
+  assert scan("note\n@devin please fix\n", config, "comment") != []
+  assert scan("@devin please fix\n", config, "body") != []
