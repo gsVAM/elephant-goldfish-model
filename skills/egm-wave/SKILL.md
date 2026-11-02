@@ -202,7 +202,9 @@ helper commands at once.
     the run folder from the first JSON line; send it to the foreman. The
     runner fails a run whose tree changed: nothing touches the worktree
     while it runs. When the lane is not available (`astra_lane.md` section
-    8) skip this step and tell the foreman `not run (<reason>)`.
+    8) skip this step and tell the foreman `not run (<reason>)`; no launch is
+    recorded, so the foreman collects that round with `collect ... --not-run
+    <reason>`, which is accepted straight from `prepared`.
 4.  **Collect.** When the completion notice arrives, message the foreman (or
     spawn step 2). It reads `result.json`, maps the findings
     (`astra_lane.md` sections 5 and 6), spawns the panel's goldfish in the

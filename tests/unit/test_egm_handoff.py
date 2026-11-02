@@ -633,7 +633,11 @@ def test_apply_refusals(world):
   text = world.plan.read_text(encoding="utf-8")
   world.plan.write_text(text.replace("low: new module", "low: a new module"), encoding="utf-8")
   code, out = world.run("apply", "--plan", world.plan, "--yes")
-  assert code == 1 and "changed since the dry run" in out
+  # The reviewed-pair check is stricter and fires first (R6-02): a plan edited
+  # after the gate is refused before the write list is even compared.
+  assert code == 1, out
+  assert ("changed since the dry run" in out
+          or "differ from the pair the gate reviewed" in out), out
   assert not any(c[0] in ("label", "issue") for c in world.gh.calls)
 
 
@@ -1571,3 +1575,82 @@ def test_the_helper_is_single_writer_by_design(world):
   assert world.run("status", "--plan", world.plan, "--wait", 60)[0] == 0
   after = (world.artifacts / "handoff_state.json").read_text(encoding="utf-8")
   assert after != before, "a wait still records what it saw, once, when it returns"
+
+
+# --------------------------------------------- inspection round 6 regressions
+
+
+def test_a_balanced_container_fence_is_refused(world):
+  """R6-01: relying on the unterminated-fence check was not enough - an author
+  can balance an unsupported fence so it never fires, hiding the text between."""
+  scan = world.ns["scan_text"]
+  config = {"banned_terms": ["(?i)secret-codename"], "fix_request_mention": None}
+  problems = scan("- ```\n  safe\n  ```\n\n@alice secret-codename\n```\n", config, "comment")
+  assert problems, "a balanced unsupported fence must not pass"
+  assert any("does not model" in p for p in problems), problems
+
+
+def test_an_ordinary_body_with_a_normal_fence_is_accepted(world):
+  """The narrowed scanner must still allow text a reasonable author writes:
+  a refusal on ordinary input would make it unusable even though it is safe."""
+  scan = world.ns["scan_text"]
+  config = {"banned_terms": ["(?i)secret-codename"], "fix_request_mention": None}
+  assert scan("Do this:\n\n```sh\nnpm test\n```\n\nThen ship.\n", config, "body") == []
+
+
+def test_apply_refuses_a_body_invisible_plan_edit(world):
+  """R6-02: the guard was added next to a scan_handoff call that lives in
+  cmd_dry_run, so apply - where the writes happen - never had it."""
+  dry_run(world)
+  text = world.plan.read_text(encoding="utf-8")
+  marker = "Decide before build\n- none"
+  assert marker in text
+  world.plan.write_text(
+      text.replace(marker, marker + "\n\nBuild note: use the legacy client.", 1),
+      encoding="utf-8")
+  code, out = world.run("apply", "--plan", world.plan, "--yes")
+  assert code == 1 and "differ from the pair the gate reviewed" in out, out
+  assert not any(c[:2] == ["issue", "create"] for c in world.gh.calls)
+
+
+def test_prepare_refuses_a_unit_file_the_plan_does_not_render(world):
+  """R6-03: the plan hash says nothing about unit_<id>.md, which is the file
+  the foreman actually reviews the pull request against."""
+  gh = applied(world)
+  make_pr(gh, 70, "a" * 40, closes=[(REPO, 2)])
+  assert world.run("status", "--plan", world.plan, "--watch", "U01=70")[0] == 0
+  unit_file = world.artifacts / "unit_U01.md"
+  unit_file.write_text(unit_file.read_text(encoding="utf-8")
+                       + "\n\nExtra instruction nobody approved.\n", encoding="utf-8")
+  code, out = world.run("prepare", "--plan", world.plan, "--unit", "U01")
+  assert code == 1 and "not what the reviewed plan renders" in out, out
+
+
+def test_ci_reads_every_page_of_status_contexts(world):
+  """R6-04: that endpoint returns 30 contexts by default, so a failing context
+  beyond the first page was invisible while the aggregate said failure."""
+  calls = [c for c in []]
+  gh = applied(world)
+  head = "a" * 40
+  gh.combined[head] = {"state": "failure", "statuses": [{"state": "success"}]}
+  make_pr(gh, 70, head, closes=[(REPO, 2)])
+  assert world.run("status", "--plan", world.plan, "--watch", "U01=70")[0] == 0
+  code, out = world.run("status", "--plan", world.plan)
+  assert "ci green" not in out, out
+
+
+def test_collect_accepts_a_round_whose_lane_never_launched(world):
+  """R6-05: with the lane off, nothing records a launch, so the round stays
+  `prepared` and the documented collect-before-remove sequence could not run."""
+  applied(world)
+  data = {"unit": "U01", "rounds": {"1": {"phase": "prepared", "pr": 70,
+                                          "worktree": "/tmp/egm-wave/x"}}}
+  (world.artifacts / "foreman_U01_state.json").write_text(json.dumps(data), encoding="utf-8")
+  code, out = world.run("collect", "--plan", world.plan, "--unit", "U01", "--round", 1)
+  assert code == 1 and "--not-run" in out, out
+  code, out = world.run("collect", "--plan", world.plan, "--unit", "U01",
+                        "--round", 1, "--not-run", "lane off")
+  assert code == 0, out
+  saved = json.loads((world.artifacts / "foreman_U01_state.json").read_text(encoding="utf-8"))
+  assert saved["rounds"]["1"]["phase"] == "collected"
+  assert "not run (lane off)" in saved["rounds"]["1"]["run_status"]

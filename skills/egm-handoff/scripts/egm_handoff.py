@@ -928,6 +928,22 @@ def normalise(body: str) -> str:
 FENCE_RE = re.compile(r"^ {0,3}(?P<fence>`{3,}|~{3,})(?P<info>.*)$")
 
 
+# A line whose first non-space run is a fence delimiter but which this scanner
+# does not model: indented four or more, or carried by a list bullet or a quote
+# marker. Relying on the unterminated-fence check to catch these was not enough
+# - an author can balance them and hide text between (round 6, R6-01).
+UNSUPPORTED_FENCE_RE = re.compile(
+    r"^(?:[ \t]*(?:[-*+>]|\d{1,9}[.)])[ \t]*|[ \t]{4,})[ \t]*(?:`{3,}|~{3,})")
+
+
+def unsupported_fence(text: str):
+  """The line number of the first fence form this scanner refuses, or None."""
+  for number, line in enumerate(text.splitlines(), start=1):
+    if UNSUPPORTED_FENCE_RE.match(line) and not FENCE_RE.match(line):
+      return number
+  return None
+
+
 def fence_delimiter(line: str):
   """(char, length, info) when the line is a fence delimiter, else None."""
   match = FENCE_RE.match(line)
@@ -1015,6 +1031,14 @@ def unterminated_fence(text: str):
 
 def scan_text(text: str, config: dict, kind: str, dod=None, label="body"):
   problems = []
+  unsupported = unsupported_fence(text)
+  if unsupported is not None:
+    # Refuse rather than guess. A fence nested in a list or indented four
+    # spaces is a shape this scanner does not model, and an author can balance
+    # such delimiters so the unterminated check never fires.
+    problems.append(f"{label}:{unsupported}: a code fence here is indented or "
+                    f"inside a list or quote, which this scan does not model; "
+                    f"put the fence at the start of its own line, unindented")
   unterminated = unterminated_fence(text)
   if unterminated is not None:
     # Fail closed: everything after an unclosed fence is hidden from the checks
@@ -1337,6 +1361,10 @@ def cmd_apply(args):
     raise HandoffError("no confirmed_sha256 in the state: run dry-run and ask the user first")
   if state.get("repo") != repo:
     raise HandoffError(f"config repo {repo} differs from the state's {state.get('repo')}: run dry-run again")
+  # Before any write: the canonical list carries the gate hashes as values, so
+  # an edit the rendered bodies do not show leaves it identical while still
+  # reaching the builder through unit_<id>.md.
+  require_reviewed_pair(handoff)
   writes = handoff.writes()
   if sha256_text(canonical(writes)) != state["confirmed_sha256"]:
     raise HandoffError("the write list changed since the dry run (plan, config, template or repo): run dry-run again")
@@ -1788,7 +1816,15 @@ def read_ci(repo, sha):
   for page in pages:
     runs += page.get("check_runs") or [] if isinstance(page, dict) else []
   combined = gh_json(["api", f"repos/{repo}/commits/{sha}/status"]) or {}
-  statuses = combined.get("statuses") or []
+  # That endpoint returns only the first 30 contexts. Page it, or a failing
+  # context beyond the first page is invisible while the aggregate says failure.
+  pages = gh_json(["api", f"repos/{repo}/commits/{sha}/status?per_page=100",
+                   "--paginate", "--slurp"]) or []
+  statuses = []
+  for page in pages:
+    statuses += (page.get("statuses") or []) if isinstance(page, dict) else []
+  if not statuses:
+    statuses = combined.get("statuses") or []
   return {"check_runs": [{"name": r.get("name"), "status": r.get("status"), "conclusion": r.get("conclusion")}
                          for r in runs],
           "combined_state": combined.get("state"),
@@ -1813,7 +1849,10 @@ def ci_verdict(ci):
   red = [r["name"] for r in runs if r["conclusion"] not in GREEN_CONCLUSIONS]
   red += [c["context"] for c in contexts
           if c.get("state") not in ("success",) and c.get("state") != "pending"]
-  if ci["statuses"] and not contexts and ci["combined_state"] != "success":
+  if ci["statuses"] and ci["combined_state"] not in ("success", None) \
+      and not any(c["context"] in red for c in contexts):
+    # Conservative: an aggregate failure we cannot attribute to a context we
+    # read is still a failure.
     red.append(f"status:{ci['combined_state']}")
   return "ci green" if not red else "ci red (" + ", ".join(str(n) for n in red) + ")"
 
@@ -2228,8 +2267,13 @@ def cmd_collect(args):
   record = (data.get("rounds") or {}).get(str(args.round))
   if not record:
     raise HandoffError(f"{args.unit} has no round {args.round} to collect")
-  if record.get("phase") not in ("launched", "collected"):
-    raise HandoffError(f"{args.unit} round {args.round} is `{record.get('phase')}`, not `launched`")
+  allowed = ("prepared", "launched", "collected") if args.not_run else ("launched", "collected")
+  if record.get("phase") not in allowed:
+    raise HandoffError(
+        f"{args.unit} round {args.round} is `{record.get('phase')}`, not "
+        f"{' or '.join(f'`{p}`' for p in allowed)}"
+        + ("" if args.not_run else ". If the lane never ran (it was unavailable, "
+           "denied, or the launch failed), collect it with --not-run <reason>."))
   folder = record.get("run_folder")
   if folder and not args.not_run:
     result = Path(folder) / "result.json"
@@ -2259,9 +2303,20 @@ def cmd_prepare(args):
   root = Path(state.get("repo_root") or handoff.repo_root)
   remote, repo = state.get("remote") or handoff.config["remote"], handoff.config["repo"]
   if not (args.clean or args.remove):
-    # A review judges the PR against unit_<id>.md, so that file must still be
-    # the one the gate reviewed.
+    # A review judges the PR against unit_<id>.md, so both the plan AND that
+    # file must still be what the gate reviewed. Hashing the plan alone is not
+    # enough: the unit file is a separate artefact on disk and is what the
+    # foreman actually reads.
     require_reviewed_pair(handoff)
+    unit_file = handoff.unit_file(args.unit)
+    expected = handoff.unit_file_text(args.unit)
+    if not unit_file.is_file() or read_text(unit_file) != expected:
+      raise HandoffError(
+          f"{unit_file.name} is not what the reviewed plan renders: it was "
+          f"edited, or the plan changed and `graph` was not re-run. The "
+          f"foreman reviews that file, so a review would judge the PR against "
+          f"text nobody approved. Run `graph`, then the gate again if the plan "
+          f"changed.")
   record = state.get("units", {}).get(args.unit) or {}
   pr = record.get("pr")
   if not pr:
