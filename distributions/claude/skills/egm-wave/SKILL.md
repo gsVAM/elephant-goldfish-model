@@ -7,7 +7,7 @@ description: >-
   issue through a foreman (a named or unnamed subagent), runs
   the single review (Astra inspect lane plus Claude goldfish) on every PR
   head with CI as evidence, posts one confirmed review comment per round,
-  and detects landed units. Builders are external; shipping stays human.
+  and detects landed units. Builders are local; shipping stays human.
   Claude Code only.
 ---
 
@@ -34,11 +34,11 @@ the next head starts the next round; the review ends on the first converged
 round (`resources/review_panels.md` section 7), cap 5 then pause. A unit lands when its issue is closed as completed and its
 watched PR is merged.
 
-**Builder backend: external only.** The issues are built by whoever picks
+**Builder backend: local only.** The issues are built on the user's own machine, by whoever picks
 them up: an agent fleet, a coding-agent service, a person. Dispatch of
-builders to cloud sandboxes (lb) is planned and not in this release; if the
+builders to cloud sandboxes is planned and not in this release; if the
 user asks the skill to dispatch a builder, say so in one line and continue
-with external builders. **What stays human**: marking a PR ready, approving,
+with local builders. **What stays human**: marking a PR ready, approving,
 merging, closing issues, deleting branches, editing issues after creation
 (except the wave label on deferral). The foreman and the elephant never push
 to a PR branch and never use `--approve` or `--request-changes`.
@@ -130,7 +130,7 @@ single quotes, no chaining. The helper's commands are listed in
 In the model's own terms the foreman is a **per-unit elephant**: it carries
 context across rounds for one build unit, holds that context in
 `foreman_<id>_state.json`, and delegates to goldfish. It is not a goldfish and
-must never be given a goldfish's lens. The **builder is external** in this
+must never be given a goldfish's lens. The **builder is local** in this
 release and is not an EGM agent; the unit issue is nevertheless written to be
 executed with no conversational history, which is why `egm-handoff` renders a
 self-contained body. Goldfish stay what they are: zero-context, read-only
@@ -241,6 +241,15 @@ helper commands at once.
     that is not falling, or regressions that are not falling, is the signal to
     change approach rather than spend another round.
 
+    **Clean but not converged.** A round can be clean while a finding in it is
+    attributable to the previous round's fixes - a declined Nit, say. There is
+    then nothing for the builder to fix, so no new head will arrive and
+    waiting for one deadlocks the unit. Treat it as a round that may be
+    re-reviewed on the **same, unchanged head**: say so in one line, ask the
+    user whether to re-review, accept, or stop, and if they re-review, run the
+    next round against that head with no fix request posted. It counts towards
+    the cap like any other round.
+
     **Cap: 5 rounds, then PAUSE.** At round 5 stop and put the decision to the
     user in one line with the trend and the open findings: continue, accept
     the remainder, or stop the unit. Do not start round 6 without their
@@ -249,12 +258,17 @@ helper commands at once.
     normal case. The comment is the fix request; the next round starts when
     `status` reports a new head with CI concluded.
 7.  **Landed.** When the unit lands, shut the foreman down by name (or stop
-    spawning steps), run `prepare --state '<STATE>' --unit U03 --clean`
-    (refs deleted, worktree list pruned), and record it in the wave report.
+    spawning steps) and clean up **each round that was prepared, by number**:
+    `prepare --state '<STATE>' --unit U03 --round <r> --clean` for every `r`
+    in that unit's `foreman_U03_state.json` `rounds` (refs deleted, worktree
+    list pruned). `--round` defaults to 1, so cleaning without it would delete
+    round 1's refs and leave a later round's behind when a replacement PR was
+    reviewed. Skip a round that recorded no worktree. Record it in the wave
+    report.
 
 ## Advancing the wave
 
-GitHub does not call back and external builders take hours or days. In an
+GitHub does not call back and a build takes hours or days. In an
 interactive session run `python3 '<HELPER>' status --state '<STATE>'
 --wait 1500` with `run_in_background: true` from this main conversation: it
 repeats the same reads every 90 seconds and exits, printing the changed unit
@@ -270,7 +284,7 @@ stayed open, the `What ran` lines) and offer the next wave.
 
 ## Run card rows and the Astra lane
 
-The card of `resources/review_panels.md` section 2 plus `Builder | external:
+The card of `resources/review_panels.md` section 2 plus `Builder | local:
 whoever picks up #<n>; model unknown | - | -` and `Foreman | subagent
 foreman-<id> (or: fresh subagents per step); issue, PR diff, CI results, no
 conversation | <session or CLAUDE_CODE_SUBAGENT_MODEL> -> effective | session

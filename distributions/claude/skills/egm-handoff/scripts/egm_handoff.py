@@ -916,12 +916,24 @@ def normalise(body: str) -> str:
 # ---------------------------------------------------------------- scan
 
 
-# A fence may be indented, and may sit inside a list item or a block quote, so
-# the marker can be preceded by list bullets and `>` markers. Scanning must see
-# those as openers too: treating the real closing fence as an opener hid every
-# following line from the scan.
-FENCE_RE = re.compile(r"^(?P<prefix>(?:[ \t]*(?:[-*+]|\d{1,9}[.)]|>)[ \t]*)*[ \t]*)"
-                      r"(?P<fence>`{3,}|~{3,})(?P<info>.*)$")
+# Narrowed deliberately: inspection rounds 1 to 5 each found a defect in a
+# cleverer version of this. A fence is a line indented at most three spaces
+# whose first non-space characters are the delimiter run, and nothing else. A
+# line indented four or more, or carrying a list bullet or a quote marker, is
+# NOT treated as a fence: in GFM it either is not one, or it is a container
+# shape this scanner does not model. Text not recognised as code is scanned,
+# and a fence that never closes refuses the whole text. Both directions fail
+# closed: the worst case is a refusal the author can act on, never a banned
+# term or a bare mention published to GitHub.
+FENCE_RE = re.compile(r"^ {0,3}(?P<fence>`{3,}|~{3,})(?P<info>.*)$")
+
+
+def fence_delimiter(line: str):
+  """(char, length, info) when the line is a fence delimiter, else None."""
+  match = FENCE_RE.match(line)
+  if not match:
+    return None
+  return match.group("fence")[0], len(match.group("fence")), match.group("info")
 
 
 def strip_spans(line: str) -> str:
@@ -972,18 +984,16 @@ def strip_code(text: str):
   a banned term or a bare mention would reach GitHub."""
   opener = None
   for number, line in enumerate(text.splitlines(), start=1):
-    match = FENCE_RE.match(line)
+    delim = fence_delimiter(line)
     if opener is None:
-      if match and "`" not in match.group("info"):
-        opener = (match.group("fence")[0], len(match.group("fence")),
-                  len(match.group("prefix")))
+      if delim and "`" not in delim[2]:
+        opener = delim[0], delim[1]
         yield number, ""
         continue
       yield number, strip_spans(line)
       continue
-    char, length, _prefix = opener
-    if (match and match.group("fence")[0] == char
-        and len(match.group("fence")) >= length and not match.group("info").strip()):
+    char, length = opener
+    if delim and delim[0] == char and delim[1] >= length and not delim[2].strip():
       opener = None
     yield number, ""
 
@@ -992,14 +1002,13 @@ def unterminated_fence(text: str):
   """The line number of a fence that never closes, or None."""
   opener = None
   for number, line in enumerate(text.splitlines(), start=1):
-    match = FENCE_RE.match(line)
+    delim = fence_delimiter(line)
     if opener is None:
-      if match and "`" not in match.group("info"):
-        opener = (match.group("fence")[0], len(match.group("fence")), number)
+      if delim and "`" not in delim[2]:
+        opener = (delim[0], delim[1], number)
       continue
     char, length, _start = opener
-    if (match and match.group("fence")[0] == char
-        and len(match.group("fence")) >= length and not match.group("info").strip()):
+    if delim and delim[0] == char and delim[1] >= length and not delim[2].strip():
       opener = None
   return opener[2] if opener else None
 
@@ -1240,6 +1249,8 @@ def cmd_dry_run(args):
     raise HandoffError("the plan, the config or the issue template changed after the gate: run the gate again")
   if len(handoff.plan.units) > MAX_UNITS:
     raise HandoffError(f"{len(handoff.plan.units)} units: split the handoff (a parent takes at most {MAX_UNITS} sub-issues)")
+  # Immediately before any write, not merely at entry: `graph` can rewrite the
+  # plan's generated section between the two.
   require_reviewed_pair(handoff)
   problems = scan_handoff(handoff)
   if problems:
@@ -1780,17 +1791,29 @@ def read_ci(repo, sha):
   statuses = combined.get("statuses") or []
   return {"check_runs": [{"name": r.get("name"), "status": r.get("status"), "conclusion": r.get("conclusion")}
                          for r in runs],
-          "combined_state": combined.get("state"), "statuses": len(statuses)}
+          "combined_state": combined.get("state"),
+          # Keep each context, not just how many: GitHub's combined state is
+          # `failure` as soon as one context fails, even while another is still
+          # pending, and a review must not start on a CI run still in flight.
+          "contexts": [{"context": s.get("context"), "state": s.get("state")} for s in statuses],
+          "statuses": len(statuses)}
 
 
 def ci_verdict(ci):
   runs = ci["check_runs"]
   if not runs and not ci["statuses"]:
     return "waiting-for-ci"
-  if any(r["status"] != "completed" for r in runs) or (ci["statuses"] and ci["combined_state"] == "pending"):
+  contexts = ci.get("contexts") or []
+  pending = [c["context"] for c in contexts if c.get("state") == "pending"]
+  if any(r["status"] != "completed" for r in runs) or pending \
+      or (ci["statuses"] and ci["combined_state"] == "pending"):
+    # Any context still pending means CI has not concluded, whatever the
+    # combined state says.
     return "waiting-for-ci"
   red = [r["name"] for r in runs if r["conclusion"] not in GREEN_CONCLUSIONS]
-  if ci["statuses"] and ci["combined_state"] != "success":
+  red += [c["context"] for c in contexts
+          if c.get("state") not in ("success",) and c.get("state") != "pending"]
+  if ci["statuses"] and not contexts and ci["combined_state"] != "success":
     red.append(f"status:{ci['combined_state']}")
   return "ci green" if not red else "ci red (" + ", ".join(str(n) for n in red) + ")"
 
@@ -2235,6 +2258,10 @@ def cmd_prepare(args):
   state = handoff.state
   root = Path(state.get("repo_root") or handoff.repo_root)
   remote, repo = state.get("remote") or handoff.config["remote"], handoff.config["repo"]
+  if not (args.clean or args.remove):
+    # A review judges the PR against unit_<id>.md, so that file must still be
+    # the one the gate reviewed.
+    require_reviewed_pair(handoff)
   record = state.get("units", {}).get(args.unit) or {}
   pr = record.get("pr")
   if not pr:

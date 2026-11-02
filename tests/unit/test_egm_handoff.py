@@ -1511,13 +1511,23 @@ def test_an_edit_the_bodies_do_not_show_still_blocks(world):
   assert "unit_<id>.md" in out
 
 
-def test_a_fence_inside_a_list_item_does_not_hide_the_rest(world):
-  """R4-07: the list-prefixed opener was missed, the real closing fence was
-  read as an opener, and every following line was hidden from the scan."""
+def test_a_container_fence_is_refused_not_interpreted(world):
+  """R4-07/R5-02: five rounds each found a defect in a cleverer parser, so the
+  contract was narrowed instead. A fence nested in a list is a shape this
+  scanner does not model: it refuses the text rather than guessing."""
   scan = world.ns["scan_text"]
   config = {"banned_terms": ["(?i)secret-codename"], "fix_request_mention": None}
-  body = "- ```\n  safe\n  ```\n\n@alice secret-codename\n"
-  problems = scan(body, config, "comment")
+  problems = scan("- ```\n  safe\n  ```\n\n@alice secret-codename\n", config, "comment")
+  assert problems, "a shape we do not model must never pass silently"
+  assert any("never closes" in p for p in problems), problems
+
+
+def test_an_indented_fence_does_not_hide_text_outside_it(world):
+  """R5-02: a four-space-indented ``` is an indented code block in GFM, not a
+  fence, so the paragraph between two of them is rendered and must be scanned."""
+  scan = world.ns["scan_text"]
+  config = {"banned_terms": ["(?i)secret-codename"], "fix_request_mention": None}
+  problems = scan("    ```\n\n@alice secret-codename\n\n    ```\n", config, "comment")
   assert any("bare mention" in p for p in problems), problems
   assert any("banned term" in p for p in problems), problems
 

@@ -32,8 +32,8 @@ panels, `resources/document_standards/handoff-standard.md`) and a
 shown and the user confirms **one question**. Only then does the helper
 create the labels, the tracking issue, the unit issues, the sub-issue and
 blocked-by links, verifying every write. The wave skill (`/egm:egm-wave`)
-launches the units later. Builders are external in this release: whoever
-picks up an issue builds it. Dispatch of builders to cloud sandboxes (lb) is
+launches the units later. Builders are local in this release: whoever
+picks up an issue builds it. Dispatch of builders to cloud sandboxes is
 planned and not in this release.
 
 Nothing is posted to GitHub before the gate passed, the dry run was written

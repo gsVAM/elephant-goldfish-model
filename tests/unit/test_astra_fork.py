@@ -287,7 +287,7 @@ def test_panels_gain_the_handoff_gate_and_pr_review_rows() -> None:
   assert "`egm-change-review` + Astra inspect" in flat
   assert "no open high or medium" in flat
   assert "| Foreman | per-unit elephant;" in flat
-  assert "| Builder | external: whoever picks up the issue;" in flat
+  assert "| Builder | local: whoever picks up the issue on this machine;" in flat
 
 
 def test_stage_10_reaches_the_loop_and_resolve_skills() -> None:
@@ -316,10 +316,18 @@ def test_foreman_is_named_a_per_unit_elephant() -> None:
     assert "zero-context" in flat or "read-only" in flat, path
 
 
-def test_readme_states_the_lb_limit_and_the_new_skills() -> None:
+def test_readme_states_the_builder_limit_and_the_new_skills() -> None:
+  """Builders are local in 0.2.0 and EGM never starts one; the future backend
+  is named generically, because that product name is not settled."""
   flat = " ".join(read("README.md").split())
-  assert ("Dispatch of builders to cloud sandboxes (lb) is planned and not in "
+  assert "Builders are local in this release" in flat
+  assert "EGM never starts a builder" in flat
+  assert ("Dispatch of builders to cloud sandboxes is planned and not in "
           "this release.") in flat
+  for path in ("skills/egm-handoff/SKILL.md", "skills/egm-wave/SKILL.md"):
+    body = " ".join(read(path).split())
+    assert "(lb)" not in body, f"{path} still names an unsettled product"
+    assert "local" in body, path
   assert "`.egm/handoff.json`" in flat
   assert "gh auth login" in flat
   for text in ("skills/egm-handoff/SKILL.md", "skills/egm-wave/SKILL.md"):
@@ -456,3 +464,13 @@ def test_the_helper_declares_itself_single_writer() -> None:
                "skills/egm-handoff/references/handoff_config.md"):
     flat = " ".join(read(path).split())
     assert "single-writer" in flat or "One command at a time" in flat, path
+
+
+def test_clean_but_not_converged_has_a_transition() -> None:
+  """R5-05: a clean round whose only finding came from the last round's fixes
+  has nothing for the builder to fix, so waiting for a new PR head deadlocks."""
+  wave = " ".join(read("skills/egm-wave/SKILL.md").split())
+  assert "Clean but not converged" in wave
+  assert "same, unchanged head" in wave
+  assert "no fix request posted" in wave
+  assert "counts towards the cap" in wave

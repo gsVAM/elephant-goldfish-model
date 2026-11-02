@@ -81,7 +81,7 @@ EGM run card
 | Claude goldfish | fresh subagents; document and reading list only | <EGM_GOLDFISH_MODEL> -> <effective> | <EGM_GOLDFISH_EFFORT> -> <effective> |
 | Astra goldfish | GPT-6 Astra through claudex-loop; document and repository, no conversation | <EGM_ASTRA_MODEL> -> requested only | <EGM_ASTRA_EFFORT> -> requested only |
 | Foreman | per-unit elephant; <named subagent sharing this checkout | fresh subagents per step>; the unit, its state file and its round files | <session model> -> same | session setting -> session setting |
-| Builder | external: whoever picks up the issue; the issue body only | unknown | unknown |
+| Builder | local: whoever picks up the issue on this machine; the issue body only | unknown | unknown |
 Astra memory: <resume | fresh>. Astra lane: <available | not run (<reason>)>.
 Readiness: <handoff gate passed: no open high or medium, readiness test <passed | not run> | review only>.
 Panel: <Astra only | Focused | Full>. Time: an Astra run takes about 8 minutes (median of measured runs, up to 30); Claude reviewers run alongside it.
