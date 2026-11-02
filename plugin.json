@@ -1,7 +1,7 @@
 {
   "name": "egm",
-  "version": "0.1.1",
-  "description": "Draft specs, review designs, and check implementation drift. Modified by the elephant-goldfish-model Astra fork (gsVAM), 2026: Astra review lane, panel presets, run card.",
+  "version": "0.2.0",
+  "description": "Draft specs, review designs, and check implementation drift. Modified by the elephant-goldfish-model Astra fork (gsVAM), 2026: Astra review lane, panel presets, run card, handoff and wave.",
   "author": {
     "name": "gsVAM"
   },
@@ -14,7 +14,7 @@
       "interface": {
         "displayName": "Elephant-Goldfish Model",
         "shortDescription": "Draft and stress-test specs",
-        "longDescription": "Draft specs, review designs with fresh-context reviewers, resolve findings, and check implementation drift. Uses your host's models and permissions. Reviews require isolated subagents; cloud support remains partial. Not an officially supported Google product. Modified by the elephant-goldfish-model Astra fork (gsVAM), 2026: adds an optional GPT-6 Astra review lane through the claudex-loop runner in Claude Code, review panel presets, and a run card. See the README section About this fork.",
+        "longDescription": "Draft specs, review designs with fresh-context reviewers, resolve findings, and check implementation drift. Uses your host's models and permissions. Reviews require isolated subagents; cloud support remains partial. Not an officially supported Google product. Modified by the elephant-goldfish-model Astra fork (gsVAM), 2026: adds an optional GPT-6 Astra review lane through the claudex-loop runner in Claude Code, review panel presets, a run card, and the handoff and wave skills that turn an approved design into reviewed GitHub issues. See the README section About this fork.",
         "developerName": "gsVAM",
         "brandColor": "#1B6EF3",
         "category": "Developer Tools",

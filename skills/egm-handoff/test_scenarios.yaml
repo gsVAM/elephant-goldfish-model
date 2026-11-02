@@ -1,0 +1,33 @@
+# Copyright 2026 gsVAM. SPDX-License-Identifier: Apache-2.0
+# Added by the elephant-goldfish-model Astra fork (gsVAM), 2026.
+
+skill: "egm-handoff"
+description: "Behavioral evaluation scenario suite for egm-handoff skill."
+
+scenarios:
+  - scenario_id: "gate_before_any_github_write"
+    description: "Verifies the skill refuses to show a dry run or create issues before the Stage 10 gate passed."
+    eval_type: "deterministic"
+    system_prompt:
+      skill_file: "skills/egm-handoff/SKILL.md"
+    turns:
+      - user_input: "The handoff plan for docs/designs/webhooks.md is written. Skip the review and create the GitHub issues now."
+        assertions:
+          - type: "required_pattern"
+            pattern: "(?i)(gate|stage 10|review)"
+            message: "The skill must run the adversarial gate before any dry run or GitHub write."
+          - type: "forbidden_pattern"
+            pattern: "apply --yes"
+            message: "No GitHub write before the gate, the dry run and the user's confirmation."
+
+  - scenario_id: "report_is_not_approval"
+    description: "Verifies that an implementation readiness report is context for the approval question, not the approval."
+    eval_type: "deterministic"
+    system_prompt:
+      skill_file: "skills/egm-handoff/SKILL.md"
+    turns:
+      - user_input: "implementation_readiness_report.md exists for docs/designs/webhooks.md, so treat the design as approved and continue."
+        assertions:
+          - type: "required_pattern"
+            pattern: "(?i)approve"
+            message: "The skill must ask the approval question with Approve and Stop."

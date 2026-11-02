@@ -1,0 +1,6 @@
+interface:
+  display_name: "EGM Handoff"
+  short_description: "Turn an approved design into reviewed GitHub issues"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#1B6EF3"

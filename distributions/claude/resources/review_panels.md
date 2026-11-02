@@ -17,7 +17,7 @@ run card or panel question; run upstream's flow (Stages 5 to 9, all reviewers).
 
 Read every value with one read-only command:
 
-    printenv | grep -E '^(EGM_[^=]*|CLAUDE_CODE_(SUBAGENT_MODEL|SUBAGENT_MODEL_FORCE|EFFORT_LEVEL|PLUGIN_CACHE_DIR)|CLAUDE_CONFIG_DIR)=' || true
+    printenv | grep -E '^(EGM_[^=]*|CLAUDE_CODE_(SUBAGENT_MODEL|SUBAGENT_MODEL_FORCE|EFFORT_LEVEL|PLUGIN_CACHE_DIR|EXPERIMENTAL_AGENT_TEAMS)|CLAUDE_CONFIG_DIR)=' || true
 
 `EGM_[^=]*` is every name that begins with `EGM_`; the other names are exact.
 
@@ -80,7 +80,10 @@ EGM run card
 | Elephant | this session; project, conversation, document | <session model> -> same | session setting -> session setting |
 | Claude goldfish | fresh subagents; document and reading list only | <EGM_GOLDFISH_MODEL> -> <effective> | <EGM_GOLDFISH_EFFORT> -> <effective> |
 | Astra goldfish | GPT-6 Astra through claudex-loop; document and repository, no conversation | <EGM_ASTRA_MODEL> -> requested only | <EGM_ASTRA_EFFORT> -> requested only |
+| Foreman | per-unit elephant; <teammate sharing this checkout | fresh subagents>; the unit, its state file and its round files | <session model> -> same | session setting -> session setting |
+| Builder | external: whoever picks up the issue; the issue body only | unknown | unknown |
 Astra memory: <resume | fresh>. Astra lane: <available | not run (<reason>)>.
+Readiness: <handoff gate passed: no open high or medium, readiness test <passed | not run> | review only>.
 Panel: <Astra only | Focused | Full>. Time: an Astra run takes about 8 minutes (median of measured runs, up to 30); Claude reviewers run alongside it.
 Data notice: when the Astra lane runs, the whole target file, the brief (on a resumed round, with your decisions on Astra's own earlier findings), any file your OS account can read that Astra opens, and your Codex AGENTS.md and memories go to OpenAI under the account `codex login status` reports.
 ```
@@ -157,6 +160,20 @@ user's explicit request (section 6).
 | Astra only | skipped | skipped | Astra lane | skipped | Astra lane |
 | Focused (default) | skipped | skipped | `egm-design` + Astra lane | skipped | `egm-implementation-readiness` + Astra lane |
 | Full | `egm-zoom-out` | `egm-comprehension` | `egm-design`, `egm-structural`, `egm-style` + Astra lane | `egm-zoom-out` | `egm-implementation-readiness`, `egm-codebase-details`, `egm-style` + Astra lane |
+
+Two reviews of the fork's handoff and wave skills reuse the same panels:
+
+| Review | Stage | Astra only | Focused (default) | Full |
+| --- | --- | --- | --- | --- |
+| Handoff gate (the handoff plan, before any GitHub write) | 10 | Astra lane | `egm-design` + Astra lane | `egm-zoom-out`, `egm-design`, `egm-implementation-readiness` + Astra lane |
+| PR review (one pull request against one build unit) | - | Astra inspect | `egm-change-review` + Astra inspect | `egm-change-review`, `egm-codebase-details` + Astra inspect |
+
+The handoff gate uses `handoff-standard.md` and runs like Stages 7 and 9: its
+Claude reviewers go to `egm-review-loop` as `Reviewers` with `Stage: 10`, and
+its stop rule is the same, no open high or medium. The PR review is run by the
+foreman, uses the inspect launch of `resources/astra_lane.md` section 3b, and
+has no `egm-review-loop` stage: the foreman dispatches its reviewers directly
+and writes the round report.
 
 Standards are unchanged: Stage 7 reviewers use `feature-spec-standard`, Stage
 9 reviewers use `implementation-readiness-standard` (`egm-style` has none).

@@ -20,7 +20,9 @@ MODIFIED = (
     "skills/egm-review-loop/test_scenarios.yaml", "skills/egm-resolve/SKILL.md",
     "plugin.json", ".claude-plugin/plugin.json", ".codex-plugin/plugin.json",
     ".claude-plugin/marketplace.json", ".agents/plugins/marketplace.json",
-    "tests/unit/test_harnesses.py",
+    "tests/unit/test_harnesses.py", "docs/getting_started.md",
+    "docs/designs/architecture.md", "scripts/pack_plugin.py",
+    "tests/unit/test_packaging.py",
 )
 
 
@@ -114,7 +116,8 @@ def test_what_ran_has_a_running_state_that_is_rewritten() -> None:
 def test_printenv_command_reads_every_egm_variable_and_nothing_else() -> None:
   command = re.search(r"^    (printenv \| grep .*)$", PANELS, re.MULTILINE).group(1)
   expected = {"EGM_ASTRA=off", "EGM_PANEL=full", "EGM_GOLDFISH_MODEL=opus",
-              "CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1"}
+              "CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1",
+              "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1"}
   env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"),
          "EGMX_OTHER": "1", "NOT_EGM_ASTRA": "1", "HOME_EGM_": "1",
          "CLAUDE_CODE_SUBAGENT_MODEL_FORCE_X": "1"}
@@ -222,3 +225,97 @@ def test_readme_about_this_fork() -> None:
     assert text in readme, text
   for path in MODIFIED:
     assert f"`{path}`" in readme, path
+
+
+# --- Release 0.2.0: handoff, wave and the foreman -----------------------------
+
+
+def test_stage_10_range_line_and_handoff_lens() -> None:
+  flat = " ".join(LANE.split())
+  assert "Stages 7, 9 and 10" in flat
+  assert ("`Lines <a>-<b> (HandoffPlan: <headings>): standard "
+          "handoff-standard.md, handoff lens.`") in flat
+  for text in ("units that are not independently buildable",
+               "a definition of done without a command that proves it",
+               "scope paths that overlap another unit without a blocker",
+               "cannot be executed without the conversation that produced it"):
+    assert text in flat, text
+
+
+def test_inspect_launch_line_is_fresh_and_unchained() -> None:
+  launches = re.findall(r"^    python3 '<RUNNER>' inspect .*$", LANE, re.MULTILINE)
+  assert len(launches) == 1
+  launch = launches[0]
+  for flag in ("--host claude", "--builder claude", "--base <MERGE_BASE_SHA>",
+               "--plan '<ARTIFACT_DIR>/unit_<unit-id>.md'", "--timeout 2700"):
+    assert flag in launch, flag
+  assert "--resume" not in launch
+  assert not re.search(r"\$EGM_|&&|\||;|\s>", launch), launch
+  flat = " ".join(LANE.split())
+  assert "An inspect run is never resumed" in flat
+  assert "a teammate cannot start a background command" in flat
+
+
+def test_bash_timeout_rule_in_both_launch_sections() -> None:
+  flat = " ".join(LANE.split())
+  assert "## 3b. Launch (pull request review)" in LANE
+  assert "Set the Bash tool's `timeout` above the runner's `--timeout`" in flat
+  assert "`2400` for a `--timeout 1800` review" in flat
+  assert "`3300` for a `--timeout 2700` inspect" in flat
+
+
+def test_inspect_data_notice() -> None:
+  flat = " ".join(LANE.split())
+  assert ("sends the pull request diff, the changed files, the unit file and "
+          "the review worktree") in flat
+  for name in ("wave_round_u*_r*.md", "foreman_*_state.json",
+               "handoff_state.json"):
+    assert name in flat, name
+
+
+def test_handoff_standard_is_linked_and_shaped() -> None:
+  assert "document_standards/handoff-standard.md" in read("resources/README.md")
+  standard = read("resources/document_standards/handoff-standard.md")
+  assert "Astra fork" in standard
+
+
+def test_panels_gain_the_handoff_gate_and_pr_review_rows() -> None:
+  flat = " ".join(PANELS.split())
+  assert "Handoff gate (the handoff plan, before any GitHub write) | 10 |" in flat
+  assert "PR review (one pull request against one build unit) | - |" in flat
+  assert "`egm-change-review` + Astra inspect" in flat
+  assert "no open high or medium" in flat
+  assert "| Foreman | per-unit elephant;" in flat
+  assert "| Builder | external: whoever picks up the issue;" in flat
+
+
+def test_stage_10_reaches_the_loop_and_resolve_skills() -> None:
+  loop = " ".join(read("skills/egm-review-loop/SKILL.md").split())
+  assert "`Stage` (`7`, `9` or `10`, for the Astra brief)" in loop
+  resolve = " ".join(read("skills/egm-resolve/SKILL.md").split())
+  assert "the review stage, `7`, `9` or `10` (the handoff gate)" in resolve
+
+
+@pytest.mark.parametrize("path", [
+    "docs/claude.md", "skills/egm-handoff/SKILL.md", "skills/egm-wave/SKILL.md",
+    "skills/egm-review-loop/SKILL.md",
+])
+def test_reviewer_isolation_rule_is_stated(path: str) -> None:
+  assert "never pass `name`" in " ".join(read(path).split()), path
+
+
+def test_foreman_is_named_a_per_unit_elephant() -> None:
+  for path in ("docs/claude.md", "skills/egm-wave/SKILL.md"):
+    flat = " ".join(read(path).split())
+    assert "per-unit elephant" in flat, path
+    assert "zero-context" in flat or "read-only" in flat, path
+
+
+def test_readme_states_the_lb_limit_and_the_new_skills() -> None:
+  flat = " ".join(read("README.md").split())
+  assert ("Dispatch of builders to cloud sandboxes (lb) is planned and not in "
+          "this release.") in flat
+  assert "`.egm/handoff.json`" in flat
+  assert "gh auth login" in flat
+  for text in ("skills/egm-handoff/SKILL.md", "skills/egm-wave/SKILL.md"):
+    assert text in flat, text

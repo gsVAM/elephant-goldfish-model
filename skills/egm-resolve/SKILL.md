@@ -39,8 +39,8 @@ The caller or orchestration driver provides exactly these parameters:
     reviewers.
 *   **`Round`** (optional, fork): the review-loop round number; `1` when
     omitted.
-*   **`Stage`** (optional, fork): the review stage, `7` or `9`; `0` when
-    omitted.
+*   **`Stage`** (optional, fork): the review stage, `7`, `9` or `10` (the
+    handoff gate); `0` when omitted.
 *   **`RunCard`** (optional, fork): text to put at the top of the report.
 
 ## Execution Workflow

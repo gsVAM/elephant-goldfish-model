@@ -49,6 +49,18 @@ to open them, but it can read them like any other file in the folder (see
 above). Write artifacts outside the repository to keep them out of the folder
 Astra reviews.
 
+The handoff gate and the wave's pull request review use the same lane, so the
+same terms apply to what they send. The handoff gate's target is the handoff
+plan: the build units with their objectives, scope paths and definitions of
+done, the rendered issue bodies and the design the units were derived from.
+The wave review's target is one unit and its pull request: the unit file, the
+saved diff, the list of changed files, the CI result file and the review
+worktree, which Astra may read like any other folder it is given. Issue
+bodies, comments and unit texts also go to GitHub, under GitHub's terms and
+with the repository's visibility; `banned_terms` in `.egm/handoff.json` is
+checked against every body and comment before it is written, and a dry run you
+confirm precedes every GitHub write.
+
 The lane runs only after a run card with this notice is shown, and only when
 the claudex-loop runner, the Codex CLI and a Codex login are present. Opt out
 with `EGM_ASTRA=off` in settings (a project's settings can override a user's,

@@ -3,6 +3,9 @@
 
 """Exercise distributable contents, unsafe paths, and reproducible output."""
 
+# Modified by the elephant-goldfish-model Astra fork (gsVAM), 2026: the handoff
+# and wave skills, their palettes and the shared handoff helper.
+
 import json
 from pathlib import Path
 import re
@@ -51,7 +54,7 @@ def test_runtime_bundle_is_complete_and_reproducible(
   with zipfile.ZipFile(archive) as bundle:
     assert bundle.testzip() is None
     names = set(bundle.namelist())
-    assert len([p for p in names if p.endswith("/SKILL.md")]) == 7
+    assert len([p for p in names if p.endswith("/SKILL.md")]) == 9
     for skill in source.glob("skills/*/SKILL.md"):
       prefix = skill.parent.relative_to(source)
       metadata = yaml.safe_load(bundle.read((prefix / "agents/openai.yaml").as_posix()))
@@ -68,6 +71,12 @@ def test_runtime_bundle_is_complete_and_reproducible(
     assert "skills/egm-bootstrap/references/templates.md" in names
     assert "resources/document_standards/feature-spec-standard.md" in names
     assert "agents/design_critic.md" in names
+    assert "agents/change_review.md" in names
+    assert "resources/document_standards/handoff-standard.md" in names
+    assert "skills/egm-handoff/scripts/egm_handoff.py" in names
+    assert [p for p in names if p.endswith(".py")] == [
+        "skills/egm-handoff/scripts/egm_handoff.py"
+    ]
     assert "docs/codex.md" in names
     assert "docs/claude.md" in names
     assert "assets/icon.svg" in names
@@ -107,6 +116,8 @@ def test_runtime_bundle_is_complete_and_reproducible(
     ("drift_report", "#e86e00", "#ff8d41"),
     ("review", "#e86e00", "#ff8d41"),
     ("review_loop", "#e86e00", "#ff8d41"),
+    ("handoff", "#1b6ef3", "#7cacf8"),
+    ("wave", "#e86e00", "#ff8d41"),
 ])
 def test_skill_icon_and_host_palette_match(skill: str, base: str, facet: str) -> None:
   root = ROOT / "skills" / f"egm-{skill.replace('_', '-')}"
@@ -274,6 +285,9 @@ def test_refuses_unbundled_services(source: Path, tmp_path: Path, field: str) ->
     "skills/egm-resolve/SKILL.md",
     "skills/egm-review/SKILL.md",
     "skills/egm-review-loop/SKILL.md",
+    "skills/egm-handoff/SKILL.md",
+    "skills/egm-wave/SKILL.md",
+    "skills/egm-handoff/scripts/egm_handoff.py",
     "skills/egm-review/agents/openai.yaml",
     "skills/egm-review/assets/icon.svg",
     "skills/egm-bootstrap/references/worker-return.schema.json",

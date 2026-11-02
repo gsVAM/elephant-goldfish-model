@@ -14,6 +14,7 @@ instead of maintaining separate summaries of their requirements.
 - [Implementation readiness standard](document_standards/implementation-readiness-standard.md)
 - [Re-implementation standard](document_standards/re-implementation-standard.md)
 - [Zoom-out standard](document_standards/zoom-out-standard.md)
+- [Handoff standard](document_standards/handoff-standard.md) (Astra fork)
 
 For installation, usage, and design rationale, see the
 [documentation index](../docs/index.md). Workflow definitions live in

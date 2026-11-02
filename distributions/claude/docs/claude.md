@@ -22,6 +22,8 @@ the `/egm:` commands are the same.) If Google's plugin is installed, run
 `claude plugin disable egm@egm` (or uninstall it) first: both plugins are named
 `egm`.
 Start messages with `/egm:egm-brainstorm`, `/egm:egm-draft`, or `/egm:egm-review`.
+After a design is approved, `/egm:egm-handoff` turns it into reviewed GitHub
+issues and `/egm:egm-wave` launches and tracks a wave of them.
 Skills retain `disable-model-invocation: true`: their absence from automatic
 skill discovery is expected. The `Skill` tool refuses these skills, so to run
 another EGM skill (for example `egm-review-loop` or `egm-resolve` during review
@@ -87,6 +89,41 @@ the panels, run card and `EGM_*` variables are `resources/review_panels.md`.
   rule for the runner; a prefix rule also approves chained commands. Headless
   runs without an approval record the lane as `not run (denied)`.
 - Other hosts (Codex, Cowork, Antigravity) never run the lane.
+
+## Agent teams and the foreman
+
+`egm-wave` gives every in-flight issue a foreman. A foreman is a **per-unit
+elephant**: it carries context across rounds for one build unit and delegates
+to goldfish, which stay zero-context and read-only. Builders are external in
+this release and are not EGM agents, though each unit issue is written to be
+executed with no conversational history. With
+`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` in an interactive session the foreman
+is a teammate spawned with the `Agent` tool and `name: foreman-<unit-id>`.
+Teammates share this checkout, so two foremen never work the same worktree
+path. A teammate cannot run a background command and its work ends with this
+session; `/resume` does not restore teammates, so re-entering the skill
+respawns them from `foreman_<unit-id>_state.json`, the one file each foreman
+writes. Because a teammate cannot run the claudex runner, the foreman prepares
+the Astra review — worktree, saved diff, CI file, brief and launch line — and
+the elephant launches it. Without the flag, or in a headless session, each
+foreman step is a fresh subagent spawned without `name`, given the same brief
+and the same state file.
+
+**Reviewer isolation.** Goldfish and synthesizer `Agent` calls never pass
+`name`; only the foreman spawn does. With the teams flag on, any named `Agent`
+call becomes a teammate that loads `CLAUDE.md` and loses the adapter's
+`omitClaudeMd: true`, which is the fresh-context guarantee a goldfish exists
+for.
+
+**GitHub writes.** Every `gh` write is one Bash approval, and no prefix allow
+rule is added for `gh`: a prefix rule also approves chained commands. The
+helper's read-only subcommands are the default; only `apply --yes` writes
+issues, after a dry run you confirm.
+
+**Paths.** Review worktrees live under `${TMPDIR:-/tmp}/egm-wave` and the refs
+the foreman fetches live under `refs/egm/`, never on a branch you work on. Put
+the artifact directory outside the repository so unit files and issue bodies
+are never committed by a builder.
 
 Claude substitutes `${CLAUDE_PLUGIN_ROOT}` in plugin skill and agent bodies. Use that
 resolved absolute root for `agents/`, `resources/`, and `docs/`; use the invoked

@@ -58,10 +58,15 @@ The caller or user provides exactly these parameters:
 *   **`GoldfishContext`**: A reading list (source files, directories, or
     documentation URLs) fed to reviewers to establish their baseline.
 *   **Fork inputs (optional)**: `AstraLane` (`on` or `off`, default `off`),
-    `Stage` (`7` or `9`, for the Astra brief), `RunCard` (text for the top of
+    `Stage` (`7`, `9` or `10`, for the Astra brief), `RunCard` (text for the
+    top of
     every report), `GoldfishModel` and `GoldfishEffort` (see
     `resources/review_panels.md` section 6). `Reviewers` may be empty when
     the panel is Astra only; then skip the Claude swarm and run the lane alone.
+*   **Reviewer isolation (fork)**: spawn every goldfish with the Agent tool
+    and never pass `name`. With `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` a
+    named Agent call becomes a teammate that loads `CLAUDE.md` and loses the
+    adapter's `omitClaudeMd: true`, which ends the fresh context.
 
 ## Path & Standard Resolution Logic
 

@@ -3,6 +3,10 @@
 
 """Build runtime folders and reproducible ZIPs without development files."""
 
+# Modified by the elephant-goldfish-model Astra fork (gsVAM), 2026: ships the
+# handoff and wave skills, the shared handoff helper, the change-review
+# persona and the handoff standard.
+
 import argparse
 import json
 from pathlib import Path
@@ -13,6 +17,7 @@ SHARED = (
     "plugin.json", "LICENSE", "README.md",
     "skills/*/SKILL.md", "skills/*/agents/openai.yaml",
     "skills/*/assets/*.svg", "skills/*/assets/*.png", "skills/*/references/*.md",
+    "skills/*/scripts/*.py",
     "skills/*/references/*.json", "agents/*.md", "resources/*.md",
     "resources/document_standards/*.md", "docs/index.md", "docs/getting_started.md",
     "docs/harnesses.md", "docs/claude.md", "docs/codex.md", "docs/faq.md",
@@ -27,6 +32,7 @@ HOST = {
 SKILLS = (
     "egm-bootstrap", "egm-brainstorm", "egm-draft", "egm-drift-report",
     "egm-resolve", "egm-review", "egm-review-loop",
+    "egm-handoff", "egm-wave",
 )
 REQUIRED_SHARED = (
     "plugin.json", "LICENSE", "README.md", "assets/icon.svg",
@@ -36,6 +42,11 @@ REQUIRED_SHARED = (
     "skills/egm-bootstrap/references/worker-return.schema.json",
     "skills/egm-bootstrap/references/templates.md",
     "skills/egm-draft/references/design_doc.md",
+    "skills/egm-handoff/scripts/egm_handoff.py",
+    "skills/egm-handoff/references/handoff_plan.md",
+    "skills/egm-handoff/references/issue_template.md",
+    "skills/egm-handoff/references/handoff_config.md",
+    "skills/egm-wave/references/foreman_brief.md",
 ) + tuple(
     f"skills/{skill}/{name}"
     for skill in SKILLS
@@ -43,13 +54,13 @@ REQUIRED_SHARED = (
 ) + tuple(
     f"agents/{name}.md" for name in (
         "bootstrap_orchestrator", "codebase_details", "comprehension",
-        "design_critic", "implementation_readiness", "structural", "style",
-        "synthesizer", "zoom_out",
+        "change_review", "design_critic", "implementation_readiness",
+        "structural", "style", "synthesizer", "zoom_out",
     )
 ) + tuple(
     f"resources/document_standards/{name}-standard.md" for name in (
         "feature-spec", "heilmeier", "implementation-readiness",
-        "re-implementation", "zoom-out",
+        "re-implementation", "zoom-out", "handoff",
     )
 )
 

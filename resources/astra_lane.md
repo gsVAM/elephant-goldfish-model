@@ -5,7 +5,8 @@ review lane. Not part of google/elephant-goldfish-model. -->
 # Astra lane
 
 The Astra lane adds one reviewer from a second model family, GPT-6 Astra, to
-Stages 7 and 9. The main conversation runs the claudex-loop runner as a
+Stages 7, 9 and 10, and reviews pull requests through the inspect launch of
+section 3b. The main conversation runs the claudex-loop runner as a
 background command. The lane is optional: when it does not run, the round is
 not blocked and the report says so; when it runs, its high and medium findings
 block like any reviewer's. Use it only in Claude Code; in other hosts record
@@ -69,7 +70,7 @@ first line says what it is.
     <one range line per reviewed range, from the table below>
     Read other lines as context only.
     Reading list: <GoldfishContext paths, or none>
-    Do not read EGM output files (*_report.md, goldfish_dispositions_s*_r*.md, astra_brief_*.md, concepts_brief.md, design_draft.md, discussion_summary.md). They hold other reviewers' work.
+    Do not read EGM output files (*_report.md, goldfish_dispositions_s*_r*.md, astra_brief_*.md, concepts_brief.md, design_draft.md, discussion_summary.md, wave_round_u*_r*.md, foreman_*_state.json, handoff_state.json). They hold other reviewers' work.
     A file that the document proposes to create is not a defect.
     Severity: high = the document cannot be approved or built as written. medium = it must change before approval. low = optional.
     path = "<plan path>:<start>-<end> (<section heading>)" of the passage at fault.
@@ -85,6 +86,7 @@ first line says what it is.
 | --- | --- |
 | Stage 7 | `Lines <a>-<b> (FeatureRange: <headings>): standard feature-spec-standard.md, design-critic lens.` |
 | Stage 9 | `Lines <c>-<d> (DetailedRange: <headings>): standard implementation-readiness-standard.md, implementer lens.` |
+| Stage 10 | `Lines <a>-<b> (HandoffPlan: <headings>): standard handoff-standard.md, handoff lens.` |
 | Full review (Preset 1) | Both lines. Leave out the `DetailedRange` line and its standard when `DetailedRange` is N/A. |
 
 Lenses, written out after the word "lens" in each line:
@@ -95,6 +97,12 @@ Lenses, written out after the word "lens" in each line:
 - Implementer: decisions left to the implementer; missing files, steps, data
   structures or tests; paths, symbols or callers that do not exist or behave
   differently in the repository; phases that do not leave a buildable state.
+- Handoff: units that are not independently buildable or not independently
+  verifiable; a definition of done without a command that proves it; scope
+  paths that overlap another unit without a blocker between them; a graph
+  that contradicts the shared files; work in the design that no unit covers,
+  and work in a unit that the design does not support; an issue body that
+  cannot be executed without the conversation that produced it.
 
 ## 3. Launch
 
@@ -127,6 +135,9 @@ hash); `--timeout 1800` leaves headroom over the slowest measured `xhigh` run;
 `--artifacts` must be outside the repository. `TMPDIR` is the only variable
 the command expands.
 
+- Set the Bash tool's `timeout` above the runner's `--timeout` with headroom
+  (`2400` for a `--timeout 1800` review): the host stops a background command
+  at its own limit, and a stopped runner leaves no result to collect.
 - If a path contains a single quote, record `not run (path quoting)`.
 - If the user denies the command, record `not run (denied)` and do not launch
   again in this review.
@@ -134,6 +145,34 @@ the command expands.
   fails a run whose plan changed. In Preset 1, make no `TargetFile` edits
   before `consolidated_review_report.md` is written.
 - Then spawn the Claude reviewers of the panel as usual (none for Astra only).
+
+## 3b. Launch (pull request review)
+
+A wave's pull request review uses the runner's `inspect` subcommand instead of
+`review`: the target is a change, not a document. The same rules as section 3
+apply — this main conversation only, `run_in_background: true`, one command,
+absolute paths in single quotes, no chaining, pipes, redirects or extra flags,
+validated literals never `$EGM_...`, and the Bash tool's `timeout` above the
+runner's with headroom (`3300` for a `--timeout 2700` inspect). The foreman
+prepares the brief and this line but never runs it: a teammate cannot start a
+background command.
+
+Always a fresh session. An inspect run is never resumed: each round reviews a
+new head, and `--base` already carries what changed.
+
+    python3 '<RUNNER>' inspect --host claude --builder claude --repo '<WORKTREE>' --base <MERGE_BASE_SHA> --plan '<ARTIFACT_DIR>/unit_<unit-id>.md' --feedback '<ARTIFACT_DIR>/astra_brief_w<wave>_u<unit-id>_r<round>.md' --model <ASTRA_MODEL> --effort <ASTRA_EFFORT> --timeout 2700 --artifacts '<ARTIFACT_DIR>/astra/u<unit-id>-r<round>'
+
+Flags that differ from section 3: `--builder claude` names who wrote the
+change; `--repo` is the prepared review worktree, not the user's checkout;
+`--base` is the merge base the foreman recorded, so the runner reads exactly
+the pull request's diff; `--plan` is the unit file, which carries the
+objective, the scope paths and the definition of done. There is no `--resume`.
+
+**Data notice.** An inspect run sends the pull request diff, the changed
+files, the unit file and the review worktree — which Astra may read in full,
+like any folder it is given — to OpenAI under the account `codex login status`
+reports. Show it in the run card before the first inspect of a wave, as
+section 3 does for a review.
 
 ## 4. Wait
 

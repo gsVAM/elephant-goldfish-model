@@ -95,6 +95,25 @@ synchronized over time, EGM provides a drift detection skill:
 We recommend running this once per week. If you have a regular maintenance
 rotation, incorporating this as a weekly ritual is useful.
 
+## Handoff and waves (fork addition)
+
+<!-- Added by the elephant-goldfish-model Astra fork (gsVAM), 2026. -->
+
+Once a design is approved, two fork skills carry it into implementation:
+
+*   **`/egm:egm-handoff`**: Turn the approved design into build units, a
+    dependency graph and waves, render one GitHub issue body per unit, put the
+    plan through the adversarial gate and a readiness test, and — only after a
+    dry run you confirm — create the tracking issue, the sub-issues, the
+    blocked-by links and the labels.
+*   **`/egm:egm-wave`**: Launch a wave of ready issues and track them to
+    landed. Each in-flight issue gets a foreman, a per-unit elephant that
+    reviews the pull request against its unit and posts one confirmed comment
+    per round. CI is the verifier; builders are external and shipping stays
+    human.
+
+Repository rules live in `.egm/handoff.json` at the repository root.
+
 ## Bootstrapping Existing Codebases
 
 ### Structure

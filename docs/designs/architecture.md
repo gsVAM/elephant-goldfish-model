@@ -55,6 +55,9 @@ failure modes:
 *   **Living Specifications**: Designs are checked-in artifacts in the source
     tree (`docs/designs/`), continuously monitored against codebase drift.
 
+<!-- Modified by the elephant-goldfish-model Astra fork (gsVAM), 2026: the
+handoff and wave skills, the change-review persona and the Phase 5 route. -->
+
 ## System Architecture & Component Model
 
 The open-source EGM framework is organized into four decoupled subsystems:
@@ -68,11 +71,16 @@ Modular agent capabilities executable via slash commands or direct invocation:
 *   `egm-resolve`: Interactive resolution and patch application.
 *   `egm-drift-report`: Agent workflow comparing specs and READMEs to code via host search and file-reading tools.
 *   `egm-bootstrap`: Recursive bottom-up codebase documentation generator.
+*   `egm-handoff` (Astra fork): Approved design to build units, graph, waves
+    and — after an adversarial gate and a confirmed dry run — GitHub issues.
+*   `egm-wave` (Astra fork): Launches a wave of issues and reviews their pull
+    requests through a per-unit foreman.
 
 ### 2. Personas Layer (`agents/`)
 Stateless system prompt instructions for isolated Goldfish reviewer subagents
 (Comprehension, Design Critic, Implementation Readiness, Codebase Auditor,
-Structural Validator, Style Editor, and Synthesizer).
+Structural Validator, Style Editor, and Synthesizer; the Astra fork adds
+Change Review, which reviews one pull request against one build unit).
 
 ### 3. Document Standards (`resources/document_standards/`)
 Goldfish reviewers load the versioned rubrics listed in the
@@ -155,8 +163,10 @@ sequenceDiagram
 ### Phase 5: Implementation & Drift Monitoring
 
 *   **Execution**: Coding agents implement code strictly adhering to the
-    approved design document. (No Skill.md is required here because the design 
-    document is complete and detailed.)
+    approved design document. In the Astra fork this runs through
+    `/egm:egm-handoff`, which turns the approved design into reviewed GitHub
+    issues, and `/egm:egm-wave`, which launches and tracks waves of them;
+    builders are external and shipping stays human.
 *   **Maintenance**: `/egm-drift-report` is run periodically (e.g. weekly) to
     detect divergence between codebase implementations and checked-in design docs.
 

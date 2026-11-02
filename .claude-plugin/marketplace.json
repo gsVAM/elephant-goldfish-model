@@ -7,7 +7,7 @@
     {
       "name": "egm",
       "source": "./",
-      "description": "Draft specs, review designs, and check implementation drift. Modified by the elephant-goldfish-model Astra fork (gsVAM), 2026: Astra review lane, panel presets, run card."
+      "description": "Draft specs, review designs, and check implementation drift. Modified by the elephant-goldfish-model Astra fork (gsVAM), 2026: Astra review lane, panel presets, run card, handoff and wave."
     }
   ]
 }
