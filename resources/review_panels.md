@@ -231,3 +231,34 @@ them. The elephant passes the user's choice per call:
   parameters; pass no other model or effort parameter.` Leave the line out
   when you would pass neither.
 - Report requested and effective values on the run card as section 2 says.
+
+## 7. Convergence and the round cap
+
+Adversarial review is a loop, not a pass. The rule below is the same for a
+design review, the handoff gate and a wave's pull request review; only the
+cost of a round differs.
+
+**Clean**: no unsettled Blocker or Major (settled = contested or declined by
+the user; a Nit never blocks).
+
+**Converged**: clean, **and** no finding in the round is attributable to the
+previous round's fixes. Both conditions. A fix can be incomplete, can move a
+defect rather than remove it, and can introduce a new one, so a round that is
+clean only because the last round's fix relocated the problem has not
+converged. Mark each finding `regression: yes|no` as you record it: `yes` when
+it is in code or text the previous round's fix touched, or when it is the same
+defect somewhere else.
+
+Report the counts per round on one line so the trend is legible, for example
+`rounds: 19 -> 14 -> 9 (regressions 7, 2)`. Counts that stop falling, or
+regressions that do not fall, mean the approach needs changing, not another
+round.
+
+**Cap: 5 rounds, then pause.** At round 5, stop and put the choice to the user
+in one line with the trend and the open findings: continue, accept the
+remainder, or stop. Never start round 6 without their answer. The cap is a
+cost guard, not a quality bar: converging at round 2 is the normal case.
+
+Where the loops differ: the handoff gate may also require two consecutive
+clean rounds, because a document round is cheap. A wave's PR review does not,
+because every round costs an inspect run and a round of builder time.

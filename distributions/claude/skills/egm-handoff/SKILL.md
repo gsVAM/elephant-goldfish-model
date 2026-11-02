@@ -151,9 +151,13 @@ bodies) are in the standard and so in both lanes. Rules on top of the loop:
     tell the user the design goes back to `egm-review` Stage 9 for that
     range, or the user records the deviation in the unit's `decide before
     build` list.
-*   **Stop rule**: the loop's own. Clean = no unsettled Blocker or Major;
-    converged = two consecutive clean rounds; cap 5; churn stops. On cap or
-    churn the user chooses accept, continue or return to the design.
+*   **Stop rule**: `resources/review_panels.md` section 7. Clean = no
+    unsettled Blocker or Major. Converged = clean **and** no finding
+    attributable to the previous round's fixes (mark each finding
+    `regression: yes|no`); for this gate, also two consecutive clean rounds,
+    because a document round is cheap. Report the trend per round. **Cap 5
+    rounds, then pause**: the user chooses accept, continue or return to the
+    design, and round 6 never starts without their answer. Churn stops.
 *   **Pass.** The loop judges a round clean before its fixes are applied,
     so the gate passes only on a clean round after which neither hash
     changed: after the last clean round run `gate --plan '<plan>' --pass

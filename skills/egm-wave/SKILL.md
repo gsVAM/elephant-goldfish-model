@@ -103,7 +103,12 @@ single quotes, no chaining. The helper's commands are listed in
         `decision_comment_U03_D1.md`. Run `scan --state '<STATE>' --comment
         '<that file>'`, then, with the user's confirmation in the same gate,
         post it once: `GH_HOST=github.com gh issue comment <n> -R O/R --body-file
-        '<path>'` (a
+        '<path>'`, and then **record the publication**: `python3 '<HELPER>'
+        decide --state '<STATE>' --unit U03 --decision D1 --published '<comment
+        url>'`. The unit stays blocked until that runs: an answer the builder
+        cannot see is not an answer, and `status` shows it as
+        `[answered, NOT PUBLISHED]`. If the post fails or the session ends
+        first, re-run the post (a
         comment with the same first line is not posted twice). An answer
         that changes scope paths or the definition of done is a plan change,
         not a decision: the user edits `handoff_plan.md` and the issue by
@@ -208,13 +213,27 @@ values filled in. One foreman per in-flight issue, at most 5 at once.
     `wave_dispositions_u<id>_r<r>.md` with the five columns of
     `egm-resolve`'s table (from the user's decision, never the AI
     suggestion); the next round's brief carries the `astra-*` rows.
-6.  **Stop rule.** A round is clean when no Blocker or Major is unsettled
-    (settled = contested or declined by the user). The review ends on the
-    first clean round (one, not two: each round costs an inspect run and a
-    round of builder time). Cap 3 rounds; then the open findings go to the
-    user in one line and into the report. The comment is the fix request;
-    the next round starts when `status` reports a new head with CI
-    concluded.
+6.  **Stop rule: convergence, not a round count** (`resources/review_panels.md` section 7). A round is *clean* when
+    no Blocker or Major is unsettled (settled = contested or declined by the
+    user). A round is *converged* when it is clean **and** no finding in it is
+    attributable to the previous round's fixes. Both conditions must hold:
+    a clean round that only became clean because the last round's fix moved
+    the defect has not converged.
+
+    Mark every finding `regression: yes|no` when you record it: `yes` when it
+    is in code the previous round's fix touched, or when it is the same defect
+    in another place. Report the per-round counts on one line so the trend is
+    visible, for example `rounds: 19 -> 14 -> 9 (regressions 7, 2)`. A count
+    that is not falling, or regressions that are not falling, is the signal to
+    change approach rather than spend another round.
+
+    **Cap: 5 rounds, then PAUSE.** At round 5 stop and put the decision to the
+    user in one line with the trend and the open findings: continue, accept
+    the remainder, or stop the unit. Do not start round 6 without their
+    answer. Each round costs an inspect run and a round of builder time, so
+    the cap is a cost guard, not a quality bar; converging at round 2 is the
+    normal case. The comment is the fix request; the next round starts when
+    `status` reports a new head with CI concluded.
 7.  **Landed.** When the unit lands, shut the foreman down by name (or stop
     spawning steps), run `prepare --state '<STATE>' --unit U03 --clean`
     (refs deleted, worktree list pruned), and record it in the wave report.

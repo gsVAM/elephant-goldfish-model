@@ -369,3 +369,31 @@ def test_the_amendment_path_requires_reconfirmation() -> None:
   assert "re-confirmed" in wave
   assert "`gate`, `dry-run` and `apply --yes` again" in wave
   assert "require_confirmed_plan" in wave
+
+
+def test_convergence_rule_is_stated_once_and_referenced() -> None:
+  """0.2.0: adversarial review is a loop with a convergence test and a cap that
+  pauses, not a fixed number of passes."""
+  flat = " ".join(PANELS.split())
+  assert "## 7. Convergence and the round cap" in PANELS
+  for text in ("no finding in the round is attributable to the previous round's fixes",
+               "regression: yes|no",
+               "Cap: 5 rounds, then pause",
+               "Never start round 6 without their answer"):
+    assert text in flat, text
+  for skill in ("skills/egm-wave/SKILL.md", "skills/egm-handoff/SKILL.md"):
+    body = " ".join(read(skill).split())
+    assert "review_panels.md` section 7" in body, skill
+    assert "regression: yes|no" in body, skill
+  wave = " ".join(read("skills/egm-wave/SKILL.md").split())
+  assert "Cap: 5 rounds, then PAUSE" in wave
+  assert "Cap 3 rounds" not in wave, "the fixed cap must be gone"
+  gate = " ".join(read("skills/egm-handoff/SKILL.md").split())
+  assert "Cap 5 rounds, then pause" in gate
+  assert "round 6 never starts without their answer" in gate
+
+
+def test_readme_states_the_convergence_behaviour() -> None:
+  flat = " ".join(read("README.md").split())
+  assert "Review loops to convergence, with a cap" in flat
+  assert "at 5 rounds the loop pauses and asks you" in flat

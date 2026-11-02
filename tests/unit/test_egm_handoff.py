@@ -1314,3 +1314,145 @@ def test_repeated_deferrals_verify_against_the_current_wave(world):
   assert code == 0 and "MISMATCH" not in out, out
   record = state_of(world)["units"]["U03"]
   assert record["initial_wave"] == 3 or record["current_wave"] == 3
+
+
+def test_every_helper_command_the_skills_document_exists(world):
+  """A documented flag that the CLI does not have fails only at the moment the
+  user runs it, which is the middle of a handoff."""
+  import argparse
+  parser = world.ns["build_parser"]()
+  subs = {}
+  for action in parser._actions:
+    if isinstance(action, argparse._SubParsersAction):
+      for name, sub in action.choices.items():
+        subs[name] = {flag for a in sub._actions for flag in a.option_strings}
+  root = Path(__file__).resolve().parents[2]
+  problems = []
+  for doc in ("skills/egm-handoff/SKILL.md", "skills/egm-wave/SKILL.md",
+              "skills/egm-wave/references/foreman_brief.md"):
+    text = (root / doc).read_text(encoding="utf-8")
+    for match in re.finditer(
+        r"<HELPER>'\s+([a-z-]+)((?:\s+--[a-z-]+(?:\s+'[^']*'|\s+<[^>]*>|\s+[\w./-]+)?)*)", text):
+      command, rest = match.group(1), match.group(2)
+      if command not in subs:
+        problems.append(f"{doc}: unknown subcommand `{command}`")
+        continue
+      problems += [f"{doc}: `{command}` has no {flag}"
+                   for flag in re.findall(r"--[a-z-]+", rest) if flag not in subs[command]]
+  assert not problems, "\n".join(sorted(set(problems)))
+
+
+# --------------------------------------------- inspection round 3 regressions
+
+
+def test_rewatching_writes_the_selection_and_its_observation_together(world):
+  """R3-01: saving watch.number=71 while units.U01.pr still described #70 sent
+  prepare to the old PR. No concurrency needed."""
+  gh = applied(world)
+  make_pr(gh, 70, "a" * 40, closes=[(REPO, 2)])
+  make_pr(gh, 71, "b" * 40, closes=[(REPO, 2)])
+  assert world.run("status", "--plan", world.plan, "--watch", "U01=70")[0] == 0
+  assert world.run("status", "--plan", world.plan, "--watch", "U01=71")[0] == 0
+  record = state_of(world)["units"]["U01"]
+  assert record["watch"]["number"] == 71
+  assert record["pr"]["number"] == 71, "the observation must follow the selection"
+
+
+def test_prepare_refuses_a_selection_its_observation_contradicts(world):
+  gh = applied(world)
+  make_pr(gh, 70, "a" * 40, closes=[(REPO, 2)])
+  assert world.run("status", "--plan", world.plan, "--watch", "U01=70")[0] == 0
+  path = world.artifacts / "handoff_state.json"
+  state = json.loads(path.read_text(encoding="utf-8"))
+  state["units"]["U01"]["watch"]["number"] = 71
+  path.write_text(json.dumps(state), encoding="utf-8")
+  code, out = world.run("prepare", "--plan", world.plan, "--unit", "U01")
+  assert code == 1 and "watches PR #71" in out and "describes #70" in out
+
+
+def test_a_second_command_cannot_write_through_a_held_lock(world):
+  """R3-02: atomic replacement keeps the file parseable but does not stop two
+  writers from each loading, deciding, and saving over one another."""
+  lock = world.ns["state_lock"]
+  HandoffError = world.ns["HandoffError"]
+  applied(world)
+  held = world.artifacts / "handoff_state.lock"
+  held.write_text("99999", encoding="utf-8")
+  try:
+    code, out = world.run("launch", "--plan", world.plan, "--wave", 1, "--units", "U01")
+    assert code == 1 and "handoff_state.lock" in out
+  finally:
+    held.unlink()
+  # and it is re-entrant: launch holds it, then asks status_pass for readiness
+  assert world.run("launch", "--plan", world.plan, "--wave", 1, "--units", "U01")[0] == 0
+
+
+def test_a_completed_label_write_binds_the_destination(world):
+  """R3-03: created_anything ignored labels, so a bounded apply that only made
+  labels left the destination free to move."""
+  dry_run(world)
+  assert world.run("apply", "--plan", world.plan, "--yes", "--max-writes", 2)[0] == 0
+  state = state_of(world)
+  assert not (state.get("units") or {}), "this bounded apply must not reach an issue"
+  assert "done" in state["labels"].values()
+  (world.repo / ".egm/handoff.json").write_text(
+      json.dumps({"repo": "other/elsewhere"}), encoding="utf-8")
+  git(["remote", "add", "other", "https://github.com/other/elsewhere.git"], world.repo)
+  code, out = world.run("status", "--plan", world.plan)
+  assert code == 1 and "frozen once anything exists" in out
+
+
+def test_a_voided_landed_confirmation_does_not_revive(world):
+  """R3-04: clearing only the local variable let a close-reopen-close sequence
+  resurrect the old confirmation without asking the user again."""
+  gh = applied(world)
+  close_as_completed(gh, 2)
+  assert world.run("status", "--plan", world.plan, "--confirm-landed", "U01")[0] == 0
+  gh.issues[2]["state"], gh.issues[2]["state_reason"] = "open", None
+  assert world.run("status", "--plan", world.plan)[0] == 0
+  close_as_completed(gh, 2)
+  code, out = world.run("status", "--plan", world.plan)
+  assert "landed: none" in out, out
+  assert state_of(world)["units"]["U01"]["landed_confirmation_void"]
+
+
+def test_launch_refuses_a_unit_that_is_not_ready(world):
+  """R3-09: launch validated only that the unit id parsed."""
+  applied(world)
+  code, out = world.run("launch", "--plan", world.plan, "--wave", 1, "--units", "U03")
+  assert code == 1 and "nothing was launched" in out
+  assert "U03" in out and ("not ready" in out or "blocking decision" in out)
+  assert not (state_of(world)["units"].get("U03") or {}).get("launched")
+
+
+def test_verify_reports_a_link_the_handoff_no_longer_wants(world):
+  """R3-06: checking only that expected links exist cannot see an obsolete one
+  left behind by an amendment."""
+  gh = applied(world)
+  assert world.run("verify", "--plan", world.plan)[0] == 0
+  state = state_of(world)
+  # U01 is blocked by nothing; an amendment that removed a blocker would leave
+  # exactly this: a live dependency the confirmed write list no longer names.
+  stale = state["units"]["U03"]["id"]
+  gh.blocked_by.setdefault(state["units"]["U01"]["number"], []).append(stale)
+  code, out = world.run("verify", "--plan", world.plan)
+  assert code == 1 and "obsolete blocked-by link" in out, out
+
+
+def test_an_escaped_backtick_does_not_hide_text_from_the_scan(world):
+  """R3-08: GFM backslash escapes mean \\` is a literal backtick, so the text
+  after it is rendered, not code."""
+  scan = world.ns["scan_text"]
+  config = {"banned_terms": ["(?i)secret-codename"], "fix_request_mention": None}
+  problems = scan(r"\`@alice secret-codename\`" + "\n", config, "body")
+  assert any("bare mention" in p for p in problems), problems
+  assert any("banned term" in p for p in problems), problems
+
+
+def test_the_wave_skill_records_decision_publication(world):
+  """R3-05: the helper gates on `published`, so a skill that never records it
+  leaves every answered decision blocking its unit."""
+  root = Path(__file__).resolve().parents[2]
+  skill = " ".join((root / "skills/egm-wave/SKILL.md").read_text(encoding="utf-8").split())
+  assert "--published" in skill
+  assert "stays blocked until that runs" in skill
