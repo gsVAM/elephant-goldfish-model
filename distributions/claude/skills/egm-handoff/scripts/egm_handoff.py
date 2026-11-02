@@ -714,6 +714,10 @@ class Handoff:
       line = (f"- {d['id']} {d['question']} Owner: {d['owner']}. Default: {d['default']}. "
               f"Blocking: {'yes' if d['blocking'] else 'no'}.")
       answer = self.state.get("decisions", {}).get(f"{unit.id}/{d['id']}")
+      if answer and answer.get("fingerprint") not in (
+          None, sha256_text(canonical([d["question"], d["owner"], d["default"],
+                                       d["blocking"]]))[:16]):
+        answer = None
       if answers and answer:
         line += f"\n  - Decision: {answer['answer']}"
       lines.append(line)
@@ -911,17 +915,21 @@ def state_lock(artifact_dir: Path, timeout=30):
       handle = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
       break
     except FileExistsError:
-      try:
-        stale = (time.time() - path.stat().st_mtime) > timeout
-      except FileNotFoundError:
-        continue
-      if stale:
-        path.unlink(missing_ok=True)
-        continue
+      # Never take a lock over on age: `apply` legitimately holds this one
+      # across network calls, write pacing and 60-second rate-limit sleeps, so
+      # any age threshold short enough to be useful is short enough to steal a
+      # live lock and let two commands write at once. Wait, then refuse with
+      # an instruction; a human deleting a file they can see beats a heuristic.
       if NOW() >= deadline:
+        holder = ""
+        try:
+          holder = f" (held by pid {path.read_text(encoding='utf-8').strip()})"
+        except OSError:
+          pass
         raise HandoffError(
-            f"another egm_handoff command is holding {path.name}; wait for it, "
-            f"or delete that file if no command is running")
+            f"another egm_handoff command is holding {path.name}{holder}. "
+            f"A long `apply` can hold it for minutes. Wait for it to finish; "
+            f"if no egm_handoff command is running, delete that file and retry.")
       SLEEP(LOCK_POLL)
   try:
     os.write(handle, str(os.getpid()).encode())
@@ -930,7 +938,13 @@ def state_lock(artifact_dir: Path, timeout=30):
     yield
   finally:
     _HELD_LOCKS.discard(key)
-    path.unlink(missing_ok=True)
+    try:
+      # Only remove the lock this process owns: a file at this path now may
+      # belong to someone else.
+      if path.read_text(encoding="utf-8").strip() == str(os.getpid()):
+        path.unlink()
+    except OSError:
+      pass
 
 
 def state_path(artifact_dir: Path) -> Path:
@@ -958,7 +972,12 @@ def normalise(body: str) -> str:
 # ---------------------------------------------------------------- scan
 
 
-FENCE_RE = re.compile(r"^(?P<indent> {0,3})(?P<fence>`{3,}|~{3,})(?P<info>.*)$")
+# A fence may be indented, and may sit inside a list item or a block quote, so
+# the marker can be preceded by list bullets and `>` markers. Scanning must see
+# those as openers too: treating the real closing fence as an opener hid every
+# following line from the scan.
+FENCE_RE = re.compile(r"^(?P<prefix>(?:[ \t]*(?:[-*+]|\d{1,9}[.)]|>)[ \t]*)*[ \t]*)"
+                      r"(?P<fence>`{3,}|~{3,})(?P<info>.*)$")
 
 
 def strip_spans(line: str) -> str:
@@ -1012,20 +1031,43 @@ def strip_code(text: str):
     match = FENCE_RE.match(line)
     if opener is None:
       if match and "`" not in match.group("info"):
-        opener = (match.group("fence")[0], len(match.group("fence")))
+        opener = (match.group("fence")[0], len(match.group("fence")),
+                  len(match.group("prefix")))
         yield number, ""
         continue
       yield number, strip_spans(line)
       continue
-    char, length = opener
+    char, length, _prefix = opener
     if (match and match.group("fence")[0] == char
         and len(match.group("fence")) >= length and not match.group("info").strip()):
       opener = None
     yield number, ""
 
 
+def unterminated_fence(text: str):
+  """The line number of a fence that never closes, or None."""
+  opener = None
+  for number, line in enumerate(text.splitlines(), start=1):
+    match = FENCE_RE.match(line)
+    if opener is None:
+      if match and "`" not in match.group("info"):
+        opener = (match.group("fence")[0], len(match.group("fence")), number)
+      continue
+    char, length, _start = opener
+    if (match and match.group("fence")[0] == char
+        and len(match.group("fence")) >= length and not match.group("info").strip()):
+      opener = None
+  return opener[2] if opener else None
+
+
 def scan_text(text: str, config: dict, kind: str, dod=None, label="body"):
   problems = []
+  unterminated = unterminated_fence(text)
+  if unterminated is not None:
+    # Fail closed: everything after an unclosed fence is hidden from the checks
+    # below, so refuse the text rather than pass it unscanned.
+    problems.append(f"{label}:{unterminated}: a code fence opens here and never "
+                    f"closes, so the rest of the text cannot be scanned; close it")
   size = len(text.encode("utf-8"))
   if size > BODY_LIMIT:
     problems.append(f"{label}: {size} bytes exceeds {BODY_LIMIT}: shorten or split the unit")
@@ -1254,6 +1296,7 @@ def cmd_dry_run(args):
     raise HandoffError("the plan, the config or the issue template changed after the gate: run the gate again")
   if len(handoff.plan.units) > MAX_UNITS:
     raise HandoffError(f"{len(handoff.plan.units)} units: split the handoff (a parent takes at most {MAX_UNITS} sub-issues)")
+  require_reviewed_pair(handoff)
   problems = scan_handoff(handoff)
   if problems:
     raise HandoffError("scan failed:\n" + "\n".join(problems))
@@ -1683,6 +1726,26 @@ def require_binding(artifact_dir: Path, handoff_id=None, repo=None) -> None:
         f"new artifact directory. Nothing was changed.")
 
 
+def require_reviewed_pair(handoff) -> None:
+  """The canonical write list carries the gate hashes as values, so an edit the
+  renderer ignores (prose after a unit's decision list, say) leaves the list
+  unchanged while still reaching the foreman through `unit_<id>.md`. Hash the
+  plan and the bodies as they are now and compare with what was reviewed."""
+  state = handoff.state
+  reviewed_plan = state.get("gate_plan_sha256")
+  reviewed_bodies = state.get("gate_bodies_sha256")
+  if not reviewed_plan:
+    return
+  plan_now, bodies_now = gate_hashes(handoff)
+  if plan_now != reviewed_plan or bodies_now != reviewed_bodies:
+    raise HandoffError(
+        f"{handoff.plan_path.name} or the rendered bodies differ from the pair "
+        f"the gate reviewed (plan {plan_now[:12]} vs {reviewed_plan[:12]}, "
+        f"bodies {bodies_now[:12]} vs {str(reviewed_bodies)[:12]}). "
+        f"Even an edit the issue bodies do not show reaches the builder through "
+        f"unit_<id>.md: run the gate again and re-confirm.")
+
+
 def require_confirmed_plan(handoff) -> None:
   """Refuse to read readiness off a plan edited since the confirmation.
 
@@ -1832,7 +1895,8 @@ def unit_view(handoff: Handoff, uid):
     # user picks the replacement with --watch.
     view["status"] = f"pr #{pr['number']} closed unmerged (choose a replacement with --watch)"
   override = record.get("landed_confirmed")
-  if override and record.get("landed_confirmation_void"):
+  if override and record.get("landed_confirmation_void") \
+      and uid not in getattr(handoff, "confirmed_now", set()):
     override = None
   if override and not closed_done:
     # The exception is for an issue closed as completed with no watched PR; it
@@ -1876,6 +1940,11 @@ def status_pass(handoff: Handoff):
   for unit in handoff.plan.units.values():
     for d in unit.decisions:
       answer = decisions.get(f"{unit.id}/{d['id']}")
+      if answer and answer.get("fingerprint") not in (
+          None, sha256_text(canonical([d["question"], d["owner"], d["default"],
+                                       d["blocking"]]))[:16]):
+        # The question changed under the answer: ids are reused, answers are not.
+        answer = None
       # An answer the builder cannot see is not an answer: the comment may have
       # failed the scan, failed to post, or the session may have ended first.
       if d["blocking"] and not (answer and answer.get("published")):
@@ -1915,6 +1984,12 @@ def status_merge(handoff: Handoff, state, summary, open_blocking):
         for key in ("watch", "pr", "landed_confirmed"):
           if record.get(key) is not None:
             target[key] = record[key]
+        if uid in getattr(handoff, "confirmed_now", set()):
+          # A fresh confirmation and the removal of the old invalidation land
+          # together, or the next command revives the stale one.
+          target.pop("landed_confirmation_void", None)
+        if record.get("status"):
+          target["status"] = record["status"]
         continue
       selected = (target.get("watch") or {}).get("number")
       observed = (record.get("pr") or {}).get("number")
@@ -1924,7 +1999,11 @@ def status_merge(handoff: Handoff, state, summary, open_blocking):
         target["pr"] = record["pr"]
       if record.get("status"):
         target["status"] = record["status"]
-      if record.get("landed_confirmation_void"):
+      if uid in getattr(handoff, "confirmed_now", set()):
+        # A fresh confirmation in this invocation clears the old invalidation;
+        # both must land together or the next command revives the stale one.
+        target.pop("landed_confirmation_void", None)
+      elif record.get("landed_confirmation_void"):
         target["landed_confirmation_void"] = record["landed_confirmation_void"]
     save_state(handoff.artifact_dir, fresh)
     handoff.state = state = fresh
@@ -1963,6 +2042,7 @@ def cmd_status(args):
   require_receipt(state)
   require_repo(handoff)
   require_confirmed_plan(handoff)
+  require_reviewed_pair(handoff)
   state.setdefault("units", {})
   for item in args.watch or []:
     uid, _, number = item.partition("=")
@@ -1989,11 +2069,15 @@ def cmd_status(args):
     target["landed_confirmed"] = now_iso()
     target.pop("landed_confirmation_void", None)
     handoff.watch_owned = getattr(handoff, "watch_owned", set()) | {uid}
+    handoff.confirmed_now = getattr(handoff, "confirmed_now", set()) | {uid}
   fingerprint = lambda s: {u: (v["pr"], v["head"], v["status"], v["landed"],
                               v.get("issue_state"), v.get("pr_state"))
                            for u, v in s["units"].items()}
   previous = fingerprint(state["status"]) if state.get("status") else None
   summary, open_blocking = status_pass(handoff)
+  # The selection has now been written. A long watcher must not keep claiming
+  # it: a newer `--watch` in another invocation is the human's later choice.
+  handoff.watch_owned = set()
   if args.wait:
     deadline = NOW() + args.wait
     previous = previous if previous is not None else fingerprint(summary)
@@ -2019,6 +2103,7 @@ def cmd_launch(args):
   require_receipt(state)
   require_repo(handoff)
   require_confirmed_plan(handoff)
+  require_reviewed_pair(handoff)
   for uid in args.units:
     if uid not in handoff.plan.units:
       raise HandoffError(f"unknown unit {uid}")
@@ -2095,10 +2180,16 @@ def cmd_decide(args):
   if not decision:
     raise HandoffError(f"{args.unit} has no decision {args.decision}")
   key = f"{args.unit}/{args.decision}"
+  fingerprint = sha256_text(canonical([decision["question"], decision["owner"],
+                                       decision["default"], decision["blocking"]]))[:16]
   if args.published:
     record = handoff.state.setdefault("decisions", {}).get(key)
     if not record:
       raise HandoffError(f"{key} has no recorded answer to mark published")
+    if record.get("fingerprint") not in (None, fingerprint):
+      raise HandoffError(
+          f"{key} was answered for a different question than the plan now asks: "
+          f"the answer was invalidated. Ask the user again with `decide --answer`.")
     record["published"] = {"comment": args.published, "at": now_iso()}
     save_state(handoff.artifact_dir, handoff.state)
     print(f"{key} published as {args.published}")
@@ -2107,6 +2198,7 @@ def cmd_decide(args):
     raise HandoffError("decide needs --answer, or --published <comment url>")
   handoff.state.setdefault("decisions", {})[key] = {"answer": args.answer,
                                                     "decided_at": now_iso(),
+                                                    "fingerprint": fingerprint,
                                                     "published": None}
   save_state(handoff.artifact_dir, handoff.state)
   write_text(handoff.unit_file(args.unit), handoff.unit_file_text(args.unit))
@@ -2201,6 +2293,42 @@ def cmd_record_launch(args):
   return 0
 
 
+def cmd_collect(args):
+  """Record a round as collected, after its run folder really finished.
+
+  Cleanup guards read the saved round state, not the run folder, so a round
+  that is reported in chat but never recorded stays `launched` and blocks
+  `prepare --remove` for ever."""
+  plan = locate(args)
+  handoff = Handoff(plan)
+  data = load_foreman(handoff.artifact_dir, args.unit)
+  record = (data.get("rounds") or {}).get(str(args.round))
+  if not record:
+    raise HandoffError(f"{args.unit} has no round {args.round} to collect")
+  if record.get("phase") not in ("launched", "collected"):
+    raise HandoffError(f"{args.unit} round {args.round} is `{record.get('phase')}`, not `launched`")
+  folder = record.get("run_folder")
+  if folder and not args.not_run:
+    result = Path(folder) / "result.json"
+    if not result.is_file():
+      raise HandoffError(f"{result} does not exist: the run has not finished, or record it "
+                         f"with --not-run <reason>")
+    status = (json.loads(read_text(result)) or {}).get("status")
+    if status != "completed":
+      raise HandoffError(f"{result} reports status `{status}`, not `completed`: wait for it, "
+                         f"or record it with --not-run <reason>")
+    record["run_status"] = "completed"
+  else:
+    record["run_status"] = f"not run ({args.not_run})" if args.not_run else "not run"
+  record.update({"phase": "collected", "collected_at": now_iso(),
+                 "verdict": args.verdict, "head": record.get("head")})
+  data["phase"] = "collected"
+  save_foreman(handoff.artifact_dir, args.unit, data)
+  print(f"{args.unit} round {args.round}: collected ({record['run_status']}"
+        + (f", verdict {args.verdict}" if args.verdict else "") + ")")
+  return 0
+
+
 def cmd_prepare(args):
   plan = locate(args)
   handoff = Handoff(plan)
@@ -2222,13 +2350,19 @@ def cmd_prepare(args):
   running = [r for r, v in rounds.items()
              if v.get("phase") == "launched"
              and v.get("run_status", v.get("status")) == "running"]
+  # `collected` is terminal: a collected round never blocks cleanup.
   if args.clean or args.remove:
     # Clean up the round that was asked for, on the PR that round reviewed; the
     # currently watched PR may already be a different one.
     this_round = rounds.get(str(args.round)) or {}
-    number = this_round.get("pr", number)
-    tree = Path(this_round["worktree"]) if this_round.get("worktree") \
-        else worktree_path(handoff.handoff_id, args.unit, number)
+    if not this_round.get("pr") or not this_round.get("worktree"):
+      raise HandoffError(
+          f"{args.unit} round {args.round} has no recorded PR and worktree, so "
+          f"there is nothing safe to clean: falling back to the PR watched now "
+          f"would delete a different round's refs. Name the round that was "
+          f"prepared, or remove the worktree by hand.")
+    number = this_round["pr"]
+    tree = Path(this_round["worktree"])
     blocking = [r for r in running if r == str(args.round)] or \
         [r for r in running if (rounds[r].get("worktree") or "") == str(tree)]
     if blocking:
@@ -2262,6 +2396,7 @@ def cmd_prepare(args):
   rounds.setdefault(str(args.round), {}).update(
       {"pr": number, "phase": "fetched", "worktree": str(tree)})
   save_foreman(handoff.artifact_dir, args.unit, foreman)
+  save_foreman(handoff.artifact_dir, args.unit, foreman)
   fetched = run_git(["rev-parse", f"refs/egm/pr/{number}"], root).strip()
   if fetched != pr["head"]:
     print(f"head-moved: refs/egm/pr/{number} is {fetched[:7]}, status recorded {pr['head'][:7]}; run status again")
@@ -2288,10 +2423,12 @@ def cmd_prepare(args):
   ci["verdict"] = ci_verdict(ci)
   ci_path = handoff.artifact_dir / f"ci_{number}_r{args.round}.json"
   write_text(ci_path, json.dumps(ci, indent=2) + "\n")
-  round_record = {"phase": "prepared", "worktree": str(tree), "head": pr["head"],
+  round_record = {"pr": number, "phase": "prepared", "worktree": str(tree), "head": pr["head"],
                   "base_ref": pr["base_ref"], "base_sha": pr["base_sha"], "merge_base": merge_base,
                   "diff": str(diff_path), "ci": str(ci_path), "ci_verdict": ci["verdict"]}
-  foreman.setdefault("rounds", {})[str(args.round)] = round_record
+  # Update, never replace: the PR this round reviewed is what `--remove` and
+  # `--clean` resolve from, and a later round may watch a different PR.
+  foreman.setdefault("rounds", {}).setdefault(str(args.round), {}).update(round_record)
   foreman.update({"phase": "prepared", "worktree": str(tree), "head": pr["head"], "merge_base": merge_base})
   save_foreman(handoff.artifact_dir, args.unit, foreman)
   if args.runner:
@@ -2378,6 +2515,12 @@ def build_parser():
   p.add_argument("--run-folder", dest="run_folder")
   p.add_argument("--not-run", dest="not_run", help="record the lane as not run, with this reason")
   p.set_defaults(func=cmd_record_launch)
+  p = add("collect", "record a round as collected once its run folder has finished")
+  p.add_argument("--unit", required=True)
+  p.add_argument("--round", type=int, default=1)
+  p.add_argument("--verdict", help="clean | revise, as the round report concluded")
+  p.add_argument("--not-run", dest="not_run", help="the lane did not run, with this reason")
+  p.set_defaults(func=cmd_collect)
   p = add("prepare", "fetch the PR into refs/egm, add a worktree, write the diff and CI file")
   p.add_argument("--unit", required=True)
   p.add_argument("--round", type=int, default=1)
@@ -2395,7 +2538,8 @@ def build_parser():
 # purpose: it may wait for minutes and must not hold the lock across its sleeps,
 # so it takes the lock per pass instead (see status_pass).
 LOCKED_COMMANDS = ("approve", "graph", "gate", "dry-run", "apply", "verify",
-                   "launch", "defer", "decide", "record-launch", "prepare")
+                   "launch", "defer", "decide", "record-launch", "prepare",
+                   "collect")
 
 
 def artifact_dir_of(args):

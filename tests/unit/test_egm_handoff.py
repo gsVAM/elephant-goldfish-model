@@ -947,7 +947,7 @@ def test_prepare_fetches_from_the_recorded_remote_into_private_refs(tmp_path, ca
   assert code == 1 and "no longer names" in out
   harness.ns["parse_remote_url"] = lambda url: REPO if url.strip() == str(target) else None
   code, out = harness.run("prepare", "--plan", plan, "--unit", "U01", "--clean")
-  assert code == 0
+  assert code == 0, out
   assert subprocess.run(["git", "-C", str(checkout), "rev-parse", "refs/egm/pr/7"], capture_output=True).returncode != 0
 
 
@@ -1456,3 +1456,137 @@ def test_the_wave_skill_records_decision_publication(world):
   skill = " ".join((root / "skills/egm-wave/SKILL.md").read_text(encoding="utf-8").split())
   assert "--published" in skill
   assert "stays blocked until that runs" in skill
+
+
+# --------------------------------------------- inspection round 4 regressions
+
+
+def test_a_live_lock_is_never_stolen_on_age(world, monkeypatch):
+  """R4-01: apply holds this lock across network calls, write pacing and
+  60-second rate-limit sleeps, so any age threshold short enough to be useful
+  is short enough to steal a live lock."""
+  applied(world)
+  held = world.artifacts / "handoff_state.lock"
+  held.write_text("99999", encoding="utf-8")
+  old = os.utime(held, (0, 0))  # as old as a file can look
+  code, out = world.run("launch", "--plan", world.plan, "--wave", 1, "--units", "U01")
+  assert code == 1 and "handoff_state.lock" in out
+  assert "pid 99999" in out, out
+  assert held.is_file(), "an ancient lock must still not be taken over"
+  held.unlink()
+
+
+def test_a_lock_is_released_only_by_its_owner(world):
+  """R4-01: the first owner's cleanup must not delete a lock someone else now
+  holds."""
+  lock = world.ns["state_lock"]
+  path = world.artifacts / "handoff_state.lock"
+  with lock(world.artifacts):
+    assert path.is_file()
+    path.write_text("424242", encoding="utf-8")  # someone else's lock now
+  assert path.is_file(), "a lock owned by another process must survive our exit"
+  path.unlink()
+
+
+def test_a_watcher_does_not_undo_a_newer_human_selection(world):
+  """R4-02: watch ownership persisted for the whole of `status --wait`, so the
+  watcher wrote its stale selection back over a newer one."""
+  gh = applied(world)
+  make_pr(gh, 70, "a" * 40, closes=[(REPO, 2)])
+  make_pr(gh, 71, "b" * 40, closes=[(REPO, 2)])
+  assert world.run("status", "--plan", world.plan, "--watch", "U01=70")[0] == 0
+  # another invocation makes the newer choice
+  assert world.run("status", "--plan", world.plan, "--watch", "U01=71")[0] == 0
+  # the first watcher polls again; it must not resurrect #70
+  assert world.run("status", "--plan", world.plan)[0] == 0
+  record = state_of(world)["units"]["U01"]
+  assert record["watch"]["number"] == 71
+  assert record["pr"]["number"] == 71
+
+
+def test_a_reconfirmed_landing_clears_its_invalidation(world):
+  """R4-03: the renewal and the removal of the invalidation must land together."""
+  gh = applied(world)
+  close_as_completed(gh, 2)
+  assert world.run("status", "--plan", world.plan, "--confirm-landed", "U01")[0] == 0
+  gh.issues[2]["state"], gh.issues[2]["state_reason"] = "open", None
+  assert world.run("status", "--plan", world.plan)[0] == 0
+  close_as_completed(gh, 2)
+  assert world.run("status", "--plan", world.plan, "--confirm-landed", "U01")[0] == 0
+  assert "landed_confirmation_void" not in state_of(world)["units"]["U01"]
+  code, out = world.run("status", "--plan", world.plan)
+  assert "landed: U01" in out, out
+
+
+def test_collect_records_a_round_and_guards_cleanup(world, tmp_path):
+  """R4-04: nothing recorded `collected`, so the cleanup guard saw a round that
+  was still `launched` for ever."""
+  applied(world)
+  folder = tmp_path / "run"; folder.mkdir()
+  assert world.run("record-launch", "--plan", world.plan, "--unit", "U01",
+                   "--round", 1, "--run-folder", str(folder))[0] == 0
+  code, out = world.run("collect", "--plan", world.plan, "--unit", "U01", "--round", 1)
+  assert code == 1 and "does not exist" in out
+  (folder / "result.json").write_text(json.dumps({"status": "running"}), encoding="utf-8")
+  code, out = world.run("collect", "--plan", world.plan, "--unit", "U01", "--round", 1)
+  assert code == 1 and "not `completed`" in out
+  (folder / "result.json").write_text(json.dumps({"status": "completed"}), encoding="utf-8")
+  code, out = world.run("collect", "--plan", world.plan, "--unit", "U01",
+                        "--round", 1, "--verdict", "clean")
+  assert code == 0 and "collected" in out
+  data = json.loads((world.artifacts / "foreman_U01_state.json").read_text(encoding="utf-8"))
+  assert data["rounds"]["1"]["phase"] == "collected"
+  assert data["rounds"]["1"]["run_status"] == "completed"
+
+
+def test_an_edit_the_bodies_do_not_show_still_blocks(world):
+  """R4-06: the write list carries the gate hashes as values, so an edit the
+  renderer ignores left it unchanged while still reaching the foreman."""
+  applied(world)
+  assert world.run("status", "--plan", world.plan)[0] == 0
+  text = world.plan.read_text(encoding="utf-8")
+  marker = "Decide before build\n- none"
+  assert marker in text
+  world.plan.write_text(
+      text.replace(marker, marker + "\n\nBuild note: use the legacy client.", 1),
+      encoding="utf-8")
+  code, out = world.run("status", "--plan", world.plan)
+  assert code == 1 and "differ from the pair the gate reviewed" in out
+  assert "unit_<id>.md" in out
+
+
+def test_a_fence_inside_a_list_item_does_not_hide_the_rest(world):
+  """R4-07: the list-prefixed opener was missed, the real closing fence was
+  read as an opener, and every following line was hidden from the scan."""
+  scan = world.ns["scan_text"]
+  config = {"banned_terms": ["(?i)secret-codename"], "fix_request_mention": None}
+  body = "- ```\n  safe\n  ```\n\n@alice secret-codename\n"
+  problems = scan(body, config, "comment")
+  assert any("bare mention" in p for p in problems), problems
+  assert any("banned term" in p for p in problems), problems
+
+
+def test_an_unclosed_fence_fails_closed(world):
+  """R4-07: everything after an unclosed fence is invisible to the checks, so
+  refuse the text rather than pass it unscanned."""
+  scan = world.ns["scan_text"]
+  config = {"banned_terms": [], "fix_request_mention": None}
+  problems = scan("```\nnever closed\n", config, "body")
+  assert any("never closes" in p for p in problems), problems
+
+
+def test_an_answer_does_not_survive_its_question_changing(world):
+  """R4-09: answers were keyed by unit/decision id alone, so an amendment that
+  changed the question kept the old answer and its publication."""
+  applied(world)
+  assert world.run("decide", "--plan", world.plan, "--unit", "U03",
+                   "--decision", "D2", "--answer", "50")[0] == 0
+  assert world.run("decide", "--plan", world.plan, "--unit", "U03", "--decision", "D2",
+                   "--published", "https://github.com/x/y/issues/4#c1")[0] == 0
+  text = world.plan.read_text(encoding="utf-8")
+  world.plan.write_text(text.replace("Page size for the listing?",
+                                     "Retention window for failed jobs?", 1), encoding="utf-8")
+  code, out = world.run("status", "--plan", world.plan)
+  # the plan no longer matches the reviewed pair, which is itself correct;
+  # the answer must also not count once the question has changed
+  assert code == 1 or "open blocking decision U03/D2" in out

@@ -253,7 +253,7 @@ def test_inspect_launch_line_is_fresh_and_unchained() -> None:
   assert not re.search(r"\$EGM_|&&|\||;|\s>", launch), launch
   flat = " ".join(LANE.split())
   assert "An inspect run is never resumed" in flat
-  assert "a teammate cannot start a background command" in flat
+  assert "a background command dies with the agent that started it" in flat
 
 
 def test_bash_timeout_rule_in_both_launch_sections() -> None:
@@ -302,7 +302,11 @@ def test_stage_10_reaches_the_loop_and_resolve_skills() -> None:
     "skills/egm-review-loop/SKILL.md",
 ])
 def test_reviewer_isolation_rule_is_stated(path: str) -> None:
-  assert "never pass `name`" in " ".join(read(path).split()), path
+  """The rule is the adapter, not the absence of a name: a live probe showed
+  omitClaudeMd tracks the agent definition and survives `name`."""
+  flat = " ".join(read(path).split())
+  assert "through its own adapter" in flat or "through their own adapters" in flat, path
+  assert "omitClaudeMd" in flat, path
 
 
 def test_foreman_is_named_a_per_unit_elephant() -> None:
@@ -397,3 +401,36 @@ def test_readme_states_the_convergence_behaviour() -> None:
   flat = " ".join(read("README.md").split())
   assert "Review loops to convergence, with a cap" in flat
   assert "at 5 rounds the loop pauses and asks you" in flat
+
+
+def test_no_teammate_claims_survive() -> None:
+  """A live probe (Orca-launched Claude session, teams flag set) established:
+  `name` makes an agent addressable, not a different kind of agent; a named
+  agent CAN run a background command; and `name` does not defeat omitClaudeMd.
+  None of those claims may reappear."""
+  for path in ("README.md", "docs/claude.md", "resources/astra_lane.md",
+               "resources/review_panels.md", "skills/egm-wave/SKILL.md",
+               "skills/egm-wave/TEST.md", "skills/egm-wave/references/foreman_brief.md",
+               "skills/egm-handoff/SKILL.md", "skills/egm-review-loop/SKILL.md"):
+    flat = " ".join(read(path).split())
+    assert "teammate" not in flat.lower(), f"{path} still says teammate"
+    assert "cannot run a background command" not in flat, path
+    assert "cannot start a background command" not in flat, path
+    assert "becomes a teammate that loads" not in flat, path
+
+
+def test_the_real_background_rule_is_stated() -> None:
+  lane = " ".join(LANE.split())
+  assert "a background command dies with the agent that started it" in lane
+  claude = " ".join(read("docs/claude.md").split())
+  assert "killed when that subagent gives its final response" in claude
+  assert "keeps running across turns" in claude
+
+
+def test_reviewer_isolation_names_the_adapter_not_the_name() -> None:
+  for path in ("docs/claude.md", "skills/egm-wave/SKILL.md",
+               "skills/egm-handoff/SKILL.md", "skills/egm-review-loop/SKILL.md"):
+    flat = " ".join(read(path).split())
+    assert "adapter" in flat, path
+    assert "omitClaudeMd" in flat, path
+    assert "never pass `name`" not in flat, f"{path}: the name rule was cargo-cult"

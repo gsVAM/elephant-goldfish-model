@@ -158,7 +158,8 @@ absolute paths in single quotes, no chaining, pipes, redirects or extra flags,
 validated literals never `$EGM_...`, and the Bash tool's `timeout` set to the
 runner's `--timeout` plus 300 seconds in milliseconds: `3900000` for the
 `--timeout 3600` inspect. The foreman prepares the brief and this line but
-never runs it: a teammate cannot start a background command. The helper's
+never runs it: a background command dies with the agent that started it, so a
+foreman that launched and then reported back would kill the run. The helper's
 `prepare` writes the exact line and that Bash timeout into
 `foreman_<unit-id>_r<round>_launch.md`; check it against this section rather
 than composing it by hand.

@@ -63,10 +63,11 @@ The caller or user provides exactly these parameters:
     every report), `GoldfishModel` and `GoldfishEffort` (see
     `resources/review_panels.md` section 6). `Reviewers` may be empty when
     the panel is Astra only; then skip the Claude swarm and run the lane alone.
-*   **Reviewer isolation (fork)**: spawn every goldfish with the Agent tool
-    and never pass `name`. With `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` a
-    named Agent call becomes a teammate that loads `CLAUDE.md` and loses the
-    adapter's `omitClaudeMd: true`, which ends the fresh context.
+*   **Reviewer isolation (fork)**: spawn every goldfish through its own
+    adapter. The adapter sets `omitClaudeMd: true` and the read-only tool
+    list, and that is what keeps the context fresh; it holds whether or not
+    the spawn is named. Reviewing with a general-purpose agent instead of the
+    adapter is what ends the fresh context.
 
 ## Path & Standard Resolution Logic
 
@@ -192,9 +193,17 @@ is rare even when the document improves. Use these rules instead:
     and say the round was Claude-only. In the Astra only panel it is the only
     reviewer, so a round in which it did not complete is not clean; after two
     such rounds, follow `resources/astra_lane.md` section 5.
-*   **Converged**: Two consecutive clean rounds. One clean round is not enough,
-    because the next fresh reviewer can find a different gap in the same text.
-*   **Cap**: 5 rounds.
+*   **Converged** (`resources/review_panels.md` section 7): clean, **and** no
+    finding in the round attributable to the previous round's fixes - mark each
+    finding `regression: yes|no` as you record it. For a document review, also
+    two consecutive clean rounds: one is not enough, because the next fresh
+    reviewer can find a different gap in the same text, and a document round is
+    cheap. Report the counts per round, for example
+    `rounds: 19 -> 14 -> 9 (regressions 7, 2)`; counts that stop falling, or
+    regressions that do not fall, mean the approach needs changing rather than
+    another round.
+*   **Cap**: 5 rounds, then pause and put the choice to the user; never
+    start round 6 without their answer.
 *   **Churn**: A new finding is at the scope of an applied fix, and reverting
     that fix would resolve it.
 

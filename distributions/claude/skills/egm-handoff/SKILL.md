@@ -281,8 +281,9 @@ restarts at step 1; a changed plan after the gate restarts at step 3.
 
 ## Reviewer isolation
 
-Goldfish and synthesizer Agent calls never pass `name`, here, in
-`egm-review-loop` and in the readiness test: with
-`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` a named Agent call becomes a
-teammate that loads CLAUDE.md and loses the adapter's `omitClaudeMd: true`.
+Always spawn a goldfish or the synthesizer through its own adapter, here, in
+`egm-review-loop` and in the readiness test. The adapter is what sets
+`omitClaudeMd: true` and the read-only tool list, and that is what keeps the
+context fresh; it holds whether or not the spawn is named. Reviewing with a
+general-purpose agent instead of the adapter is what breaks isolation.
 Only the wave skill's foreman spawn carries a `name`.

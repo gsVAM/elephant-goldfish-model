@@ -96,24 +96,31 @@ the panels, run card and `EGM_*` variables are `resources/review_panels.md`.
 elephant**: it carries context across rounds for one build unit and delegates
 to goldfish, which stay zero-context and read-only. Builders are external in
 this release and are not EGM agents, though each unit issue is written to be
-executed with no conversational history. With
-`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` in an interactive session the foreman
-is a teammate spawned with the `Agent` tool and `name: foreman-<unit-id>`.
-Teammates share this checkout, so two foremen never work the same worktree
-path. A teammate cannot run a background command and its work ends with this
-session; `/resume` does not restore teammates, so re-entering the skill
-respawns them from `foreman_<unit-id>_state.json`, the one file each foreman
-writes. Because a teammate cannot run the claudex runner, the foreman prepares
-the Astra review — worktree, saved diff, CI file, brief and launch line — and
-the elephant launches it. Without the flag, or in a headless session, each
-foreman step is a fresh subagent spawned without `name`, given the same brief
-and the same state file.
+executed with no conversational history.
 
-**Reviewer isolation.** Goldfish and synthesizer `Agent` calls never pass
-`name`; only the foreman spawn does. With the teams flag on, any named `Agent`
-call becomes a teammate that loads `CLAUDE.md` and loses the adapter's
-`omitClaudeMd: true`, which is the fresh-context guarantee a goldfish exists
-for.
+A foreman is spawned with the `Agent` tool and `name: foreman-<unit-id>`. The
+`name` makes it addressable with `SendMessage` and resumable from its
+transcript; it does not create a separate kind of agent. (`ListAgents` reports
+a named agent as an ordinary subagent, and the `team_name` parameter is
+deprecated and ignored: a session has one implicit team.) Each foreman keeps
+`foreman_<unit-id>_state.json` as its memory, so a step that has to be respawned
+can pick the round up.
+
+**Why the foreman prepares and this session launches.** A background command
+dies with the agent that started it: a subagent's background command is killed
+when that subagent gives its final response, while one started from the main
+conversation keeps running across turns. So a foreman that launched the Astra
+runner and then reported back would kill the run. The foreman therefore
+prepares the review — worktree, saved diff, CI file, brief and launch line —
+and this session runs it, records the run folder with `record-launch`, and
+hands it back. (A named agent *can* start a background command; the constraint
+is its lifetime, not a prohibition.)
+
+**Reviewer isolation.** Always spawn a goldfish through its own adapter. The
+adapter is what sets `omitClaudeMd: true` and the read-only `Read, Grep, Glob`
+tool list, and that is what keeps the context fresh; it holds whether or not
+the spawn is named. Spawning a review with a general-purpose agent instead of
+the adapter is what breaks isolation — such an agent loads `CLAUDE.md`.
 
 **GitHub writes.** Every `gh` write is one Bash approval, and no prefix allow
 rule is added for `gh`: a prefix rule also approves chained commands. Every

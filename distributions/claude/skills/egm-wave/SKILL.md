@@ -4,7 +4,7 @@ license: Apache-2.0
 disable-model-invocation: true
 description: >-
   Launches the next wave of a handoff's GitHub issues, watches each in-flight
-  issue through a foreman (an agent-teams teammate or fresh subagents), runs
+  issue through a foreman (a named or unnamed subagent), runs
   the single review (Astra inspect lane plus Claude goldfish) on every PR
   head with CI as evidence, posts one confirmed review comment per round,
   and detects landed units. Builders are external; shipping stays human.
@@ -30,8 +30,8 @@ Astra `inspect` lane through the claudex-loop runner plus the panel's Claude
 goldfish (`egm-change-review`, and `egm-codebase-details` in the Full panel)
 on the PR diff, with the CI results as evidence. Findings go to the PR as
 one review comment per round after the user confirms it; the builder fixes;
-the next head starts the next round; the review ends on the first clean
-round, cap 3. A unit lands when its issue is closed as completed and its
+the next head starts the next round; the review ends on the first converged
+round (`resources/review_panels.md` section 7), cap 5 then pause. A unit lands when its issue is closed as completed and its
 watched PR is merged.
 
 **Builder backend: external only.** The issues are built by whoever picks
@@ -139,22 +139,31 @@ reviewers.
 Read `references/foreman_brief.md` and pass its brief verbatim with the
 values filled in. One foreman per in-flight issue, at most 5 at once.
 
-*   **With agent teams** (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` is `1` and
-    the session is interactive): spawn a teammate with the Agent tool and
-    `name: foreman-<unit-id>`, an in-process teammate that shares this
-    checkout and files, idles between rounds and acts when you message it.
-    A teammate cannot run a background command and its work ends with this
-    session; `/resume` does not restore teammates (re-entry respawns them).
-*   **Without teams** (flag unset or `0`, or a `-p` session): each foreman
-    step is a fresh subagent spawned without `name`, with the same brief and
+*   **Named foreman** (the default when the Agent tool accepts `name`):
+    spawn it with `name: foreman-<unit-id>`. `name` makes the foreman
+    addressable with `SendMessage` and resumable from its transcript; it does
+    not create a different kind of agent (`ListAgents` reports a named agent
+    as an ordinary subagent, and `team_name` is deprecated and ignored). It
+    shares this checkout and files, and `foreman_<id>_state.json` is what
+    carries a round across a respawn.
+*   **Unnamed foreman** (the Agent tool has no `name`, or a `-p` session):
+    each foreman step is a fresh subagent with the same brief and
     the unit's `foreman_<id>_state.json` as its memory. Step 1 (`prepare`)
     returns the launch line; step 2 (collect, goldfish, report) returns the
     one-line status. Subagents may nest to spawn their goldfish.
-*   **Reviewer isolation**: goldfish and synthesizer Agent calls never pass
-    `name`; only the foreman spawn does. With the teams flag on, a named
-    Agent call becomes a teammate that loads CLAUDE.md and loses the
-    adapter's `omitClaudeMd: true`.
-*   The foreman never launches the claudex runner, never writes to GitHub,
+*   **Reviewer isolation**: always spawn a goldfish through its own adapter.
+    The adapter sets `omitClaudeMd: true` and the read-only `Read, Grep,
+    Glob` tools, and that is what keeps a goldfish's context fresh; it holds
+    whether or not the spawn is named. What breaks isolation is reviewing
+    with a general-purpose agent instead of the adapter: such an agent loads
+    CLAUDE.md.
+*   **The foreman never launches the claudex runner** (step 3 below is this
+    session's). Not because it is forbidden to run background commands - it
+    can - but because a background command dies with the agent that started
+    it: a subagent's is killed when that subagent gives its final response,
+    while one started from the main conversation keeps running across turns.
+    A foreman that launched and then reported back would kill the run.
+*   The foreman never writes to GitHub,
     never edits the user's working tree, and writes only its own state file
     and round files. It reports one line: `foreman U03: pr #412 head
     3e1f2a7 round 2 status <state> verdict <verdict> run <folder or ->
@@ -257,7 +266,7 @@ stayed open, the `What ran` lines) and offer the next wave.
 ## Run card rows and the Astra lane
 
 The card of `resources/review_panels.md` section 2 plus `Builder | external:
-whoever picks up #<n>; model unknown | - | -` and `Foreman | teammate
+whoever picks up #<n>; model unknown | - | -` and `Foreman | subagent
 foreman-<id> (or: fresh subagents per step); issue, PR diff, CI results, no
 conversation | <session or CLAUDE_CODE_SUBAGENT_MODEL> -> effective | session
 setting`. The inspect launch, its Bash timeout, the data notice (the PR diff
