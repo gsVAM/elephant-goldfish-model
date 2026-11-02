@@ -17,7 +17,7 @@
 
 <!-- Modified by the elephant-goldfish-model Astra fork (gsVAM), 2026: this section and the install commands. -->
 
-This repository is a modified version of [google/elephant-goldfish-model](https://github.com/google/elephant-goldfish-model) (upstream 0.1.0), maintained by gsVAM, release 0.2.0. Google does not endorse it. For Claude Code it adds:
+This repository is a modified version of [google/elephant-goldfish-model](https://github.com/google/elephant-goldfish-model) (upstream 0.1.0), maintained by gsVAM, release 0.2.1. Google does not endorse it. For Claude Code it adds:
 
 - **An Astra lane.** GPT-6 Astra reviews the design at Stage 7 (Critic) and Stage 9 (Implementation Readiness) through the [claudex-loop](https://github.com/chaseai-yt/claudex-loop) runner, beside the Claude reviewers. Its high and medium findings block a clean round like any reviewer's. A lane that cannot run never blocks a Claude-only review.
 - **Panel presets.** Every review asks for the panel together with the review mode: *Astra only* (one adversarial read), *Focused* (default: Claude design critic plus Astra at Stage 7, Claude readiness reviewer plus Astra at Stage 9) or *Full* (every upstream reviewer, Stages 5 to 9, plus Astra).

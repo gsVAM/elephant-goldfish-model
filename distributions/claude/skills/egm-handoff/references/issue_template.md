@@ -67,6 +67,10 @@ its sub-issue.
 ## Limits the scan enforces
 
 A body over 65,000 bytes is refused with "shorten or split the unit" (GitHub
-rejects 65,536). No banned term and no bare `@name` outside code spans and
-blocks; no merge markers. The configured `fix_request_mention` is allowed
-only on the first line of a round comment, never in a body.
+rejects 65,536). No banned term and no bare `@name` anywhere in the text -
+code spans and fenced blocks included, because the scan is not code-aware;
+no merge markers. A mention that legitimately belongs in a body is listed in
+`allowed_mentions` in `.egm/handoff.json` as the exact token GitHub would
+resolve (for example `@types/node`; `@acme` does not cover the team
+`@acme/release`). The configured `fix_request_mention` is allowed only on the
+first line of a round comment, never in a body.

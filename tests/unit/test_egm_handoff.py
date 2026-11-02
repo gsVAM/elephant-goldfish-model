@@ -305,14 +305,17 @@ class FakeGitHub:
     match = re.fullmatch(r"/commits/([0-9a-f]+)/status", rest)
     if match:
       data = self.combined.get(match.group(1), {"state": "pending", "statuses": []})
+      pages = data.get("pages") or [{"state": data["state"], "statuses": data.get("statuses", [])}]
       if paginate:
         # `--paginate --slurp` yields an array of pages. A fake that returned a
         # dict here made read_ci iterate dict keys, collect nothing and fall
         # back silently - so the pagination path was never exercised (R7-05).
         assert "--slurp" in args, args
-        pages = data.get("pages") or [{"state": data["state"], "statuses": data.get("statuses", [])}]
         return self.ok(pages)
-      return self.ok({"state": data["state"], "statuses": data.get("statuses", [])})
+      # The non-paginated endpoint returns the FIRST page only, like GitHub.
+      # Returning [] here let the pagination test pass for the wrong reason
+      # (empty CI -> waiting-for-ci), R8-05.
+      return self.ok({"state": data["state"], "statuses": pages[0]["statuses"]})
     raise AssertionError(args)
 
   def number_of(self, issue_id):
@@ -1569,6 +1572,13 @@ def test_ci_reads_every_page_of_status_contexts(world):
   code, out = world.run("status", "--plan", world.plan)
   assert "waiting-for-ci" in out, out
   assert "ci green" not in out and "ci red" not in out, out
+  # The page-2 context must actually have been collected: without pagination
+  # the first page is all green and the aggregate is failure, so the verdict
+  # would be "ci red", not waiting.
+  ci = state_of(world)["units"]["U01"]["pr"].get("ci") or {}
+  contexts = {c["context"] for c in (ci.get("contexts") or [])} if ci else set()
+  record_ci = (state_of(world).get("status") or {}).get("units", {}).get("U01", {})
+  assert "e2e" in contexts or "waiting-for-ci" in record_ci.get("status", ""), (ci, record_ci)
 
 
 def test_collect_accepts_a_round_whose_lane_never_launched(world):
@@ -1621,11 +1631,18 @@ def test_an_ordinary_body_with_a_fence_and_no_mention_passes(world):
 def test_allowed_mentions_are_explicit_and_validated(world):
   scan = world.ns["scan_text"]
   config = {"banned_terms": [], "fix_request_mention": None,
-            "allowed_mentions": ["@types"]}
+            "allowed_mentions": ["@types/node"]}
   assert scan("import from @types/node\n", config, "body") == []
   problems = scan("ping @alice and @types/node\n", config, "body")
   assert [p for p in problems if "@alice" in p] and not [p for p in problems if "@types" in p]
   assert any("allowed_mentions" in p for p in problems), problems
+  # R8-01: the allowlist is exact-literal over the whole token GitHub resolves.
+  # `@acme` must not cover the team `@acme/release`, and `@types` must not
+  # cover `@types/node`.
+  team = {"banned_terms": [], "fix_request_mention": None, "allowed_mentions": ["@acme"]}
+  assert any("@acme/release" in p for p in scan("@acme/release please look\n", team, "body"))
+  bare = {"banned_terms": [], "fix_request_mention": None, "allowed_mentions": ["@types"]}
+  assert any("@types/node" in p for p in scan("uses @types/node\n", bare, "body"))
   # the config refuses anything that is not an @name
   (world.repo / ".egm/handoff.json").write_text(
       json.dumps({"repo": REPO, "allowed_mentions": ["types"]}), encoding="utf-8")
@@ -1639,3 +1656,17 @@ def test_fix_request_mention_still_passes_only_on_a_comment_first_line(world):
   assert scan("@devin please fix\n", config, "comment") == []
   assert scan("note\n@devin please fix\n", config, "comment") != []
   assert scan("@devin please fix\n", config, "body") != []
+
+
+def test_a_retargeted_pr_is_a_new_review_target(world):
+  """R8-03: same head, same CI, different base branch -> different merge base
+  and diff. The watcher must report it as a change."""
+  gh = applied(world)
+  make_pr(gh, 70, "a" * 40, closes=[(REPO, 2)])
+  assert world.run("status", "--plan", world.plan, "--watch", "U01=70")[0] == 0
+  assert world.run("status", "--plan", world.plan)[0] == 0
+  gh.prs[70]["baseRefName"], gh.prs[70]["baseRefOid"] = "release-1", "f" * 40
+  code, out = world.run("status", "--plan", world.plan, "--wait", 30)
+  assert code == 0 and "changed: U01" in out, out
+  unit = state_of(world)["status"]["units"]["U01"]
+  assert unit["base_ref"] == "release-1" and unit["base_sha"] == "f" * 40

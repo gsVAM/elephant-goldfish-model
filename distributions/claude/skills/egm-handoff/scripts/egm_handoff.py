@@ -26,8 +26,11 @@ from pathlib import Path
 
 LABEL_RE = re.compile(r"^[^,\s]{1,50}$")
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
-MENTION_CONFIG_RE = re.compile(r"^@[A-Za-z0-9-]+(\[bot\])?$")
-MENTION_RE = re.compile(r"(?<![\w./-])@[A-Za-z0-9][A-Za-z0-9-]*(?:\[bot\])?")
+MENTION_CONFIG_RE = re.compile(r"^@[A-Za-z0-9][A-Za-z0-9-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)?(?:\[bot\])?$")
+# The whole token GitHub would resolve: `@user`, `@user[bot]`, or `@org/team` -
+# a team mention subscribes every member, so the slash segment is part of the
+# mention and must be matched and allow-listed as one literal (R8-01).
+MENTION_RE = re.compile(r"(?<![\w./-])@[A-Za-z0-9][A-Za-z0-9-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)?(?:\[bot\])?")
 REMOTE_URL_RE = re.compile(
     r"^(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)"
     r"([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?$")
@@ -947,6 +950,8 @@ def scan_text(text: str, config: dict, kind: str, dod=None, label="body"):
       if term.search(line):
         problems.append(f"{label}:{number}: banned term /{term.pattern}/")
     for found in MENTION_RE.findall(line):
+      # Exact literal only: `@types` in the allowlist does not cover
+      # `@types/node`, and `@acme` never covers the team `@acme/release`.
       if found in allowed:
         continue
       if kind == "comment" and number == 1 and mention and found == mention:
@@ -1780,6 +1785,9 @@ def unit_view(handoff: Handoff, uid):
     record["pr"] = pr
     view["pr"], view["head"] = pr["number"], pr["head"]
     view["pr_state"] = "MERGED" if pr.get("merged_at") else (pr.get("state") or "OPEN").upper()
+    # A retarget (main -> an older release branch) changes the merge base and
+    # the diff while head and CI stay the same: it is a new review target.
+    view["base_ref"], view["base_sha"] = pr.get("base_ref"), pr.get("base_sha")
     if pr["merged_at"]:
       view["status"] = "merged"
     else:
@@ -1858,7 +1866,8 @@ def status_pass(handoff: Handoff, save=True):
              "unlaunched_with_pr": unlaunched_prs, "open_blocking": {u: [d["id"] for d in ds] for u, ds in open_blocking.items()},
              "units": {u: {"pr": v["pr"], "head": v["head"], "status": v["status"],
                            "landed": v["landed"], "issue_state": v.get("issue_state"),
-                           "pr_state": v.get("pr_state"),
+                           "pr_state": v.get("pr_state"), "base_ref": v.get("base_ref"),
+                           "base_sha": v.get("base_sha"),
                            "candidates": v["candidates"]} for u, v in views.items()},
              "at": now_iso()}
   state["status"] = summary
@@ -1927,7 +1936,8 @@ def cmd_status(args):
     target["landed_confirmed"] = now_iso()
     target.pop("landed_confirmation_void", None)
   fingerprint = lambda s: {u: (v["pr"], v["head"], v["status"], v["landed"],
-                              v.get("issue_state"), v.get("pr_state"))
+                              v.get("issue_state"), v.get("pr_state"),
+                              v.get("base_ref"), v.get("base_sha"))
                            for u, v in s["units"].items()}
   previous = fingerprint(state["status"]) if state.get("status") else None
   summary, open_blocking = status_pass(handoff, save=not args.wait)

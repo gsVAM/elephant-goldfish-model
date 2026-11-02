@@ -231,9 +231,15 @@ helper commands at once.
     and findings, CI and DoD evidence from the old head would land on the new
     one. Say so in one line, record the round as `head-moved`, and start the
     next round against the new head. Only when the head is unchanged, post
-    with `GH_HOST=github.com gh pr review <n> -R O/R --comment --body-file
-    '<path>'`, one Bash approval; the comment's header names the reviewed
-    head, so the review is bound to the commit it judged. Record the user's dispositions in
+    through the API with the review bound to the reviewed commit:
+    `GH_HOST=github.com gh api repos/O/R/pulls/<n>/reviews -f
+    commit_id='<full reviewed sha>' -f event=COMMENT -F body=@'<path>'`, one
+    Bash approval. `gh pr review` cannot do this: it submits no commit id, and
+    GitHub then attaches the review to whatever the latest commit is - so a
+    push between the head check and the post would land findings from one
+    head on another. Read `commit_id` from the response and refuse to count
+    the round posted unless it equals the reviewed sha. The comment's header
+    names the reviewed head as well. Record the user's dispositions in
     `wave_dispositions_u<id>_r<r>.md` with the five columns of
     `egm-resolve`'s table (from the user's decision, never the AI
     suggestion); the next round's brief carries the `astra-*` rows.
