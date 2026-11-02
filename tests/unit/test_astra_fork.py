@@ -90,6 +90,27 @@ def test_step_answers_only_the_mode_question() -> None:
   assert "Show the card in chat on every review" in flat
 
 
+def test_combined_prompt_replaces_the_preset_gate() -> None:
+  review = " ".join(read("skills/egm-review/SKILL.md").split())
+  assert "It replaces item 1's gate (mode asked once)" in review
+  flat = " ".join(PANELS.split())
+  assert ("this prompt replaces the Curated Pipeline Presets gate of `egm-review` "
+          "Step 2 item 1: the mode is asked exactly once, here.") in flat
+  assert "Other hosts keep upstream's gate." in flat
+
+
+def test_what_ran_has_a_running_state_that_is_rewritten() -> None:
+  flat = " ".join(PANELS.split())
+  assert "`running (started <time>)`" in flat
+  assert ("Once the lane completes, fails or is skipped, rewrite the `What ran` "
+          "lines") in flat
+  assert "of every report written in this review so far" in flat
+  assert "at Cross-Stage Synthesis at the latest" in flat
+  lane = " ".join(LANE.split())
+  assert "astra (<model>, <effort>): running (started <time>)" in lane
+  assert "rewrite that line and the `What ran` line in every report" in lane
+
+
 def test_printenv_command_reads_every_egm_variable_and_nothing_else() -> None:
   command = re.search(r"^    (printenv \| grep .*)$", PANELS, re.MULTILINE).group(1)
   expected = {"EGM_ASTRA=off", "EGM_PANEL=full", "EGM_GOLDFISH_MODEL=opus",
@@ -174,6 +195,7 @@ def test_lane_launch_and_safety_rules() -> None:
   assert "first reason that applies: `host`" in flat
   for text in ("run_in_background: true", "review --host claude", "--timeout 1800",
                "cache/claudex-loop/claudex-loop", "codex login status",
+               "https://code.claude.com/docs/en/plugins-reference",
                "Never start it from a subagent",
                "If you are a subagent or workflow agent, do not launch",
                "not run", "skip astra", "`status` is `completed`",

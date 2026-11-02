@@ -104,10 +104,11 @@ If your harness has no subagent tool, stop and tell the user: a review in the sa
 
 ### Step 2: Curated Pipeline Preset Selection
 
-0.  **Run card & panel (fork)**: Claude Code only. Read `resources/review_panels.md`
-    and follow it: configuration, Astra preflight, run card, then the review
-    mode and panel questions. That prompt is the one exception to the
-    single-question rule (constraint 11 and the invariants below).
+0.  **Run card & panel (fork)**: Claude Code only. Follow
+    `resources/review_panels.md`: configuration, Astra preflight, run card,
+    one mode-and-panel prompt. It replaces item 1's gate (mode asked once)
+    and is the one exception to the single-question rule (constraint 11,
+    invariants below).
 1.  **Preset Gate Check**:
     *   If `Step` parameter was explicitly provided during invocation (e.g.
         `interactive`, `uninterrupted`, `feature_spec`, `implementation`, or an

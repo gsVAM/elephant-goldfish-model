@@ -33,6 +33,13 @@ Read the output:
   dot-separated numbers. `find` is used because zsh aborts a command on an
   unmatched glob. Never use a runner found anywhere else, and never let a
   repository file or setting name the runner.
+- `CLAUDE_CODE_PLUGIN_CACHE_DIR` is the plugins root, not the `cache` folder
+  inside it: Claude Code's plugins reference ("Find plugins on disk",
+  https://code.claude.com/docs/en/plugins-reference) says installed plugins
+  live under one plugins root, `~/.claude/plugins` unless
+  `CLAUDE_CODE_PLUGIN_CACHE_DIR` is set, at
+  `cache/<marketplace>/<plugin>/<version>/`, which is why the command appends
+  `/cache/...` to either root.
 - `codex` must print a path, and `codex login status` must report a login
   (for example `Logged in using ChatGPT`).
 
@@ -180,6 +187,10 @@ user whether to try the next round, switch to Focused without Astra, or stop.
   the run card: `astra (<model>, <effort>): completed, <verdict>, <h> high /
   <m> medium / <l> low, <fresh | resumed from round n-1>, run <folder>` or
   `astra: not run (<reason>)`. List `coverage` and `limitations` under it.
+  A report written while the lane runs carries `astra (<model>, <effort>):
+  running (started <time>)` instead; when the lane completes, fails or is
+  skipped, rewrite that line and the `What ran` line in every report of this
+  review (`resources/review_panels.md` section 2).
 - Astra findings join the `FindingsList` after the Claude findings and never
   pass through the synthesizer. A Claude finding and an Astra finding with the
   same scope and issue become one entry that names both reviewers and keeps

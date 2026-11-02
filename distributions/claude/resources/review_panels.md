@@ -54,14 +54,24 @@ the mode and panel (section 3).
 
 Show the card in chat on every review: before the mode and panel prompt, or
 before the first stage when `Step` and the panel were both given (section 3).
-Write it, followed by a `What ran` line per lane (`completed` or `not run
-(<reason>)`), at the top of every report of this review: `*_report.md`,
-`goldfish_review_report.md`, `consolidated_review_report.md`. A report a
-subagent writes (the synthesizer's, or a directly dispatched reviewer's) has
-no card: prepend the card and the `What ran` lines to that file yourself, right
-after the subagent returns and before you read it further, and pass `Stage`,
-`Round` (the loop's last round + 1) and `RunCard` on every `egm-resolve` call,
-including the ones at the Stage 7 and 9 gates.
+Write it, followed by a `What ran` line per lane (`completed`, `not run
+(<reason>)`, or the non-terminal `running (started <time>)`), at the top of
+every report of this review: `*_report.md`, `goldfish_review_report.md`,
+`consolidated_review_report.md`. A report a subagent writes (the
+synthesizer's, or a directly dispatched reviewer's) has no card: prepend the
+card and the `What ran` lines to that file yourself, right after the subagent
+returns and before you read it further, and pass `Stage`, `Round` (the loop's
+last round + 1) and `RunCard` on every `egm-resolve` call, including the ones
+at the Stage 7 and 9 gates.
+
+A report written while the Astra lane is still running records `running
+(started <time>)`; that state is never final. Once the lane completes, fails
+or is skipped, rewrite the `What ran` lines (and the Astra status line,
+`resources/astra_lane.md` section 6) of every report written in this review so
+far with the terminal state and the effective model and effort; in
+consolidated mode do this at Cross-Stage Synthesis at the latest, before
+`consolidated_review_report.md` is written. Keep a list of the reports you
+have written in this review so none is missed.
 
 ```text
 EGM run card
@@ -102,7 +112,11 @@ Cell rules:
 
 ## 3. Mode and panel prompt
 
-Ask both questions in one turn, right after the card:
+Ask both questions in one turn, right after the card. In Claude Code this
+prompt replaces the Curated Pipeline Presets gate of `egm-review` Step 2 item
+1: the mode is asked exactly once, here. Record both answers and go straight
+to Step 3 or the chosen subflow; never show the preset gate again. Other hosts
+keep upstream's gate.
 
 - **Q1, review mode**: the four options of the Curated Pipeline Presets gate
   in `egm-review`, unchanged. `Step` answers only Q1. When `Step` was passed,
