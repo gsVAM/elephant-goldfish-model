@@ -52,8 +52,12 @@ number, per round the phase (`fetched`, `prepared`, `launched` with the run
 folder, `collected`, `cleaned`), the run folder and its status, the findings
 with ids and dispositions, whether the current head has been reviewed, and
 the worktree path. The helper writes the phases up to `prepared` and
-`cleaned`; the foreman writes `launched` (with the run folder the elephant
-sends), `collected` and the findings. On re-entry the elephant reads every
+`cleaned`; the **elephant** writes `launched` with `record-launch` the moment
+the runner prints its folder (nothing else persists between `prepared` and
+`collected`: on the no-teams path the prepare subagent has already returned and
+the collect subagent is not spawned until the run completes, so a session that
+ends in between would redo the round and abandon a finished run); the foreman
+writes `collected` and the findings. On re-entry the elephant reads every
 `foreman_*_state.json`: a round whose phase is `launched` with a `completed`
 run folder resumes at step 2; a round at `fetched` or `prepared`, or
 `launched` with a folder still `running` after the lead ended (`not run

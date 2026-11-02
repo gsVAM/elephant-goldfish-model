@@ -17,6 +17,7 @@ import json
 import os
 import re
 import subprocess
+import urllib.parse
 import sys
 import tempfile
 import time
@@ -135,9 +136,11 @@ def canonical(obj) -> str:
   return json.dumps(obj, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
 
 
-def run_git(args, cwd: Path) -> str:
+def run_git(args, cwd: Path, check=True) -> str:
   result = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True,
                           text=True, encoding="utf-8")
+  if not check:
+    return result.stdout if result.returncode == 0 else ""
   if result.returncode != 0:
     raise HandoffError(f"git {' '.join(args)} failed in {cwd}: "
                        f"{result.stderr.strip() or result.stdout.strip()}")
@@ -175,9 +178,23 @@ class GhError(Exception):
     return int(match.group(1)) if match else None
 
 
+GH_HOSTNAME = "github.com"
+
+
+def gh_env():
+  """Pin gh to github.com: GH_HOST in the environment would otherwise send
+  every write to an enterprise server, which no approval or remote check in
+  this helper looks at."""
+  env = dict(os.environ)
+  env["GH_HOST"] = GH_HOSTNAME
+  env.pop("GH_ENTERPRISE_TOKEN", None)
+  env.pop("GITHUB_ENTERPRISE_TOKEN", None)
+  return env
+
+
 def _subprocess_gh(args, cwd, stdin=None):
   result = subprocess.run(["gh", *args], cwd=str(cwd), capture_output=True,
-                          text=True, encoding="utf-8", input=stdin)
+                          text=True, encoding="utf-8", input=stdin, env=gh_env())
   return result.returncode, result.stdout, result.stderr
 
 
@@ -194,6 +211,19 @@ def gh(args, stdin=None) -> str:
   if code != 0:
     raise GhError(args, code, out, err)
   return out
+
+
+def gh_retry(args, stdin=None) -> str:
+  """`gh` with the same bounded rate-limit retries the issue and link writes
+  get: a secondary limit on a label must not end the run at the first refusal."""
+  for attempt in range(4):
+    try:
+      return gh(args, stdin)
+    except GhError as error:
+      if error.rate_limited and attempt < 3:
+        SLEEP(error.retry_after or 60)
+        continue
+      raise
 
 
 def gh_json(args):
@@ -337,7 +367,8 @@ class Unit:
         "shared": [{"path": p, "order": [{"kind": k, "unit": u} for k, u in o]}
                    for p, o in self.shared],
         "risk": {"level": self.risk[0], "reason": self.risk[1]},
-        "size": self.size, "dod": self.dod, "decisions": self.decisions,
+        "size": self.size, "dod": self.dod,
+        "decisions": [{k: v for k, v in d.items() if k != "line"} for d in self.decisions],
         "wave": wave, "predecessors": sorted(preds),
     }
 
@@ -437,8 +468,9 @@ class Plan:
                       "owner: <owner>; default: <default>; blocking: yes|no`")
       unit.decisions.append({"id": decide.group(1), "question": decide.group(2),
                              "owner": decide.group(3), "default": decide.group(4),
-                             "blocking": decide.group(5) == "yes"})
+                             "blocking": decide.group(5) == "yes", "line": i + 1})
       i += 1
+    self._check_decision_ids(unit)
     self.units[uid] = unit
     self.order.append(uid)
     return i
@@ -486,6 +518,17 @@ class Plan:
     if len(unit.scope) > SIZE_LIMIT[value]:
       self._fail(line, f"{unit.id}: size {value} allows at most {SIZE_LIMIT[value]} scope paths")
     unit.size = value
+
+  def _check_decision_ids(self, unit):
+    seen = {}
+    for d in unit.decisions:
+      if d["id"] in seen:
+        raise HandoffError(
+            f"{self.path}:{d.get('line', unit.line)}: unit {unit.id} has two "
+            f"decisions with the id {d['id']} (the first is at line "
+            f"{seen[d['id']]}): answering one would release the unit while the "
+            f"other is still open. Give each decision its own id.")
+      seen[d["id"]] = d.get("line", unit.line)
 
   def _check_references(self):
     for unit in self.units.values():
@@ -583,7 +626,12 @@ class Handoff:
     self.design_path = design
     self.design_sha = sha256_file(design)
     self.repo_root = git_toplevel(design)
-    self.design_commit = run_git(["rev-parse", "--short", "HEAD"], self.repo_root).strip()
+    # An unrelated commit after approval must not change a single rendered
+    # body: the gate hashes, a bounded resume and verify all depend on them.
+    recorded = ((state if state is not None else load_state(self.artifact_dir))
+                .get("approval") or {}).get("commit")
+    self.design_commit = recorded or run_git(
+        ["rev-parse", "--short", "HEAD"], self.repo_root).strip()
     self.design_title = next((l[2:].strip() for l in read_text(design).splitlines()
                               if l.startswith("# ")), design.stem)
     self.config = load_config(self.repo_root)
@@ -648,7 +696,13 @@ class Handoff:
   def forward_ref(self, uid):
     return f"{uid} ({self.plan.units[uid].title})"
 
-  def decision_lines(self, unit):
+  def decision_lines(self, unit, answers=False):
+    """Render the unit's decisions.
+
+    `answers` is False for anything that becomes a GitHub issue body: the
+    posted body must stay byte-identical to what the user confirmed, or verify
+    reports a mismatch and the wave cannot start. Answers reach the issue as a
+    comment (`decision_comment_*.md`) and the foreman through the unit file."""
     if not unit.decisions:
       return "- none"
     lines = []
@@ -656,7 +710,7 @@ class Handoff:
       line = (f"- {d['id']} {d['question']} Owner: {d['owner']}. Default: {d['default']}. "
               f"Blocking: {'yes' if d['blocking'] else 'no'}.")
       answer = self.state.get("decisions", {}).get(f"{unit.id}/{d['id']}")
-      if answer:
+      if answers and answer:
         line += f"\n  - Decision: {answer['answer']}"
       lines.append(line)
     return "\n".join(lines)
@@ -732,7 +786,16 @@ class Handoff:
   def unit_file_text(self, uid):
     unit = self.plan.units[uid]
     section = unit_section_text(self.plan, uid)
-    return (f"{section}\n\n## Issue body as posted\n\n```markdown\n{self.render_unit(uid)}```\n")
+    text = (f"{section}\n\n## Issue body as posted\n\n"
+            f"```markdown\n{self.render_unit(uid)}```\n")
+    answered = [d for d in unit.decisions
+                if self.state.get("decisions", {}).get(f"{uid}/{d['id']}")]
+    if answered:
+      # Kept out of the issue body on purpose (the posted body must stay
+      # byte-identical for verify); the answer reaches the issue as a comment.
+      text += "\n## Decisions answered since the issue was posted\n\n"
+      text += self.decision_lines(unit, answers=True) + "\n"
+    return text
 
   def generated_section(self):
     g = self.graph
@@ -776,6 +839,19 @@ class Handoff:
     for uid in self.graph.order:
       write_text(self.unit_file(uid), self.unit_file_text(uid))
     write_text(self.artifact_dir / "handoff_bodies.md", self.bodies_text())
+    previous = self.state.get("handoff_id")
+    if previous and previous != self.handoff_id:
+      created = [u for u, d in (self.state.get("units") or {}).items() if d.get("number")]
+      if created or (self.state.get("tracking") or {}).get("number"):
+        raise HandoffError(
+            f"{self.artifact_dir} already holds handoff {previous} with issues on "
+            f"GitHub ({', '.join(created) or 'tracking'}); this design is handoff "
+            f"{self.handoff_id}. Creation, decision and verification records are "
+            f"not transferable: start the new handoff in a new artifact directory.")
+      for key in ("confirmed", "confirmed_sha256", "confirmed_at", "labels",
+                  "dry_run", "verify", "gate", "readiness", "units", "tracking",
+                  "decisions"):
+        self.state.pop(key, None)
     self.state.update({"handoff_id": self.handoff_id, "repo": self.config["repo"],
                        "remote": self.config["remote"], "repo_root": str(self.repo_root),
                        "plan": str(self.plan_path),
@@ -825,7 +901,12 @@ def load_state(artifact_dir: Path) -> dict:
 
 
 def save_state(artifact_dir: Path, state: dict) -> None:
-  write_text(state_path(artifact_dir), json.dumps(state, indent=2, sort_keys=True) + "\n")
+  """Replace the state file atomically: a truncating write interrupted here
+  leaves invalid JSON and no handoff can be resumed from it."""
+  path = state_path(artifact_dir)
+  tmp = path.with_name(path.name + f".tmp{os.getpid()}")
+  tmp.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+  os.replace(tmp, path)
 
 
 def normalise(body: str) -> str:
@@ -835,15 +916,31 @@ def normalise(body: str) -> str:
 # ---------------------------------------------------------------- scan
 
 
+FENCE_RE = re.compile(r"^(?P<indent> {0,3})(?P<fence>`{3,}|~{3,})(?P<info>.*)$")
+
+
 def strip_code(text: str):
-  """Yield (line number, text outside code spans and fenced blocks)."""
-  fenced = False
+  """Yield (line number, text outside code spans and fenced blocks).
+
+  GFM closes a fence only with a run of the same character at least as long as
+  the opener, so a four-backtick block may contain a bare ``` line. Treating
+  every ``` as a toggle hid the rest of the body from the scanner, which is how
+  a banned term or a bare mention would reach GitHub."""
+  opener = None
   for number, line in enumerate(text.splitlines(), start=1):
-    if line.strip().startswith("```"):
-      fenced = not fenced
-      yield number, ""
+    match = FENCE_RE.match(line)
+    if opener is None:
+      if match and "`" not in match.group("info"):
+        opener = (match.group("fence")[0], len(match.group("fence")))
+        yield number, ""
+        continue
+      yield number, re.sub(r"(?P<t>`+)(?:[^`]|(?!(?P=t))`)*(?P=t)", "", line)
       continue
-    yield number, "" if fenced else re.sub(r"`[^`]*`", "", line)
+    char, length = opener
+    if (match and match.group("fence")[0] == char
+        and len(match.group("fence")) >= length and not match.group("info").strip()):
+      opener = None
+    yield number, ""
 
 
 def scan_text(text: str, config: dict, kind: str, dod=None, label="body"):
@@ -908,8 +1005,11 @@ def cmd_approve(args):
   if not design.is_file():
     raise HandoffError(f"design {design} does not exist")
   root = git_toplevel(design)
+  if not run_git(["ls-files", "--error-unmatch", "--", str(design)], root, check=False).strip():
+    raise HandoffError(f"{design} is not tracked by git (an ignored or untracked "
+                       f"file passes a clean `status`): commit it first (Phase 4)")
   if run_git(["status", "--porcelain", "--", str(design)], root).strip():
-    raise HandoffError(f"{design} is not tracked and clean: commit it first (Phase 4)")
+    raise HandoffError(f"{design} is tracked but not clean: commit it first (Phase 4)")
   text = read_text(design)
   for heading in ("## Detailed Implementation Plan", "### Target Files to Create/Modify",
                   "### Verification Plan"):
@@ -926,6 +1026,9 @@ def cmd_approve(args):
       raise HandoffError(f"{evidence} does not name {design.name}")
   sha = sha256_file(design)
   commit = run_git(["rev-parse", "--short", "HEAD"], root).strip()
+  rel = design.relative_to(root).as_posix()
+  if not run_git(["cat-file", "-t", f"{commit}:{rel}"], root, check=False).strip():
+    raise HandoffError(f"{rel} does not exist at commit {commit}: commit it first (Phase 4)")
   stamp = time.strftime("%Y-%m-%d", time.gmtime(evidence.stat().st_mtime)) if evidence else None
   question = (f"Approve `{design}` (sha256 `{sha[:12]}`, commit `{commit}`) for handoff? "
               f"Evidence: {f'`{evidence}` (modified {stamp})' if evidence else 'none given'}.")
@@ -1101,6 +1204,12 @@ def cmd_dry_run(args):
   write_text(handoff.artifact_dir / "handoff_dryrun.md", "\n".join(lines) + "\n")
   state["labels"] = labels
   state["confirmed_sha256"] = confirmed
+  # The confirmed snapshot is the contract the user approved. Keep the write
+  # list itself, not only its hash: verify and status must compare GitHub with
+  # what was confirmed, never with a plan re-parsed since.
+  state["confirmed"] = {"sha256": confirmed, "repo": handoff.config["repo"],
+                        "host": GH_HOSTNAME, "handoff_id": handoff.handoff_id,
+                        "writes": writes, "at": now_iso()}
   state["dry_run"] = {"labels": len(to_create), "issues": len(issues), "sub_issues": len(subs),
                       "blocked_by": len(blocked), "writes": total, "at": now_iso()}
   save_state(handoff.artifact_dir, state)
@@ -1139,6 +1248,12 @@ def cmd_apply(args):
   writes = handoff.writes()
   if sha256_text(canonical(writes)) != state["confirmed_sha256"]:
     raise HandoffError("the write list changed since the dry run (plan, config, template or repo): run dry-run again")
+  # A banned_terms or mention rule added after the dry run leaves the write list
+  # unchanged, so the hash above cannot catch it. Scan the outgoing text itself.
+  problems = scan_handoff(handoff)
+  if problems:
+    raise HandoffError("the current scan refuses the text that would be written:\n  "
+                       + "\n  ".join(problems))
   state.setdefault("confirmed_at", now_iso())
   budget = Budget(args.max_writes)
   save = lambda: save_state(handoff.artifact_dir, state)
@@ -1169,9 +1284,10 @@ def apply_writes(handoff: Handoff, writes, budget: Budget, save):
       continue
     budget.spend()
     try:
-      gh(["label", "create", item[1], "-R", repo, "--color", LABEL_COLOR,
-          "--description", f"EGM handoff label ({item[1]})"])
+      gh_retry(["label", "create", item[1], "-R", repo, "--color", LABEL_COLOR,
+                "--description", f"EGM handoff label ({item[1]})"])
       labels[item[1]] = "done"
+      SLEEP(1)
     except GhError as error:
       if error.http_status == 422 or "already exists" in (error.stderr + error.stdout):
         existing = {l["name"] for l in gh_pages(f"repos/{repo}/labels")}
@@ -1183,7 +1299,9 @@ def apply_writes(handoff: Handoff, writes, budget: Budget, save):
     save()
   units = state.setdefault("units", {})
   tracking = state.setdefault("tracking", {})
-  listing = gh_pages(f"repos/{repo}/issues?labels={handoff.handoff_label()}&state=all&per_page=100")
+  listing = gh_pages(f"repos/{repo}/issues?labels="
+                     f"{urllib.parse.quote(handoff.handoff_label(), safe='')}"
+                     f"&state=all&per_page=100")
   for issue in listing:
     if "pull_request" in issue:
       continue
@@ -1194,6 +1312,11 @@ def apply_writes(handoff: Handoff, writes, budget: Budget, save):
     if not target.get("number"):
       target.update({"number": issue["number"], "id": issue["id"], "done": True})
   save()
+  for record in [tracking, *units.values()]:
+    if record.get("number") and not record.get("id"):
+      record["id"] = gh_json(["api", f"repos/{repo}/issues/{record['number']}"])["id"]
+      record["done"] = True
+      save()
   for item in writes:
     if item[0] != "issue":
       continue
@@ -1209,8 +1332,12 @@ def apply_writes(handoff: Handoff, writes, budget: Budget, save):
     text = fill_numbers(body, numbers, tracking.get("number"))
     budget.spend()
     number = create_issue(repo, title, text, label_set, handoff.artifact_dir)
-    target.update({"number": number, "done": True})
+    # Record the number before the id read: a failure between them must leave a
+    # resumable state, not an issue that later stages treat as complete.
+    target["number"] = number
+    save()
     target["id"] = gh_json(["api", f"repos/{repo}/issues/{number}"])["id"]
+    target["done"] = True
     save()
     SLEEP(1)
   links = state.setdefault("links", {})
@@ -1295,8 +1422,17 @@ def post_link(endpoint, fields, present, links, key):
 
 
 def run_verify(handoff: Handoff, writes=None):
-  state, repo = handoff.state, handoff.config["repo"]
+  state, repo = handoff.state, require_repo(handoff)
+  confirmed = state.get("confirmed") or {}
+  stored = confirmed.get("writes")
+  if writes is None and stored:
+    # Verify what the user confirmed, not what the plan says now: an edited
+    # local plan must not be able to make a stale receipt look clean.
+    writes = [tuple(w) for w in stored]
   writes = writes or handoff.writes()
+  if stored and sha256_text(canonical([list(w) for w in writes])) != confirmed.get("sha256"):
+    raise HandoffError("the write list no longer matches the confirmed snapshot: "
+                       "run dry-run again and re-confirm before verifying")
   checkable = [w for w in writes if w[0] not in ("repo", "gate")]
   problems, checked = [], 0
   units, tracking = state.get("units", {}), state.get("tracking", {})
@@ -1321,8 +1457,15 @@ def run_verify(handoff: Handoff, writes=None):
         if normalise(live.get("body") or "") != normalise(expected):
           problems.append(f"MISMATCH body of #{target['number']} ({item[1]}) differs from the rendered body")
         live_labels = {l["name"] for l in live.get("labels", [])}
-        if not set(item[3]) <= live_labels:
-          problems.append(f"MISMATCH labels of #{target['number']} ({item[1]}): missing {sorted(set(item[3]) - live_labels)}")
+        expected_labels = set(item[3])
+        deferred = target.get("deferred")
+        if deferred:
+          # `defer` is an authorised, recorded label change: the confirmed write
+          # list still names the wave the graph produced.
+          expected_labels.discard(deferred["from"])
+          expected_labels.add(deferred["to"])
+        if not expected_labels <= live_labels:
+          problems.append(f"MISMATCH labels of #{target['number']} ({item[1]}): missing {sorted(expected_labels - live_labels)}")
         checked += 1
       elif kind == "sub_issue":
         if not tracking.get("number") or not units.get(item[1], {}).get("id"):
@@ -1343,7 +1486,8 @@ def run_verify(handoff: Handoff, writes=None):
     except GhError as error:
       problems.append(f"MISMATCH read failed for {item[:2]}: {error}")
   complete = checked == len(checkable) and not any(p.startswith("MISMATCH read failed") for p in problems)
-  state["verify"] = {"sha256": state.get("confirmed_sha256"), "complete": complete,
+  state["verify"] = {"sha256": confirmed.get("sha256") or state.get("confirmed_sha256"),
+                     "complete": complete,
                      "checked": f"{checked} of {len(checkable)}", "problems": problems,
                      "verified_at": now_iso()}
   save_state(handoff.artifact_dir, state)
@@ -1361,6 +1505,41 @@ def cmd_verify(args):
 
 
 # ---------------------------------------------------------------- status
+
+
+def require_repo(handoff) -> str:
+  """Refuse any operation that uses a stored issue or PR number when the
+  configured repository is no longer the one those numbers were created on."""
+  repo = handoff.config["repo"]
+  frozen = (handoff.state.get("confirmed") or {}).get("repo") or handoff.state.get("repo")
+  if frozen and frozen != repo:
+    raise HandoffError(
+        f"this handoff was created on {frozen} but the configuration now names "
+        f"{repo}: issue and PR numbers are not portable between repositories. "
+        f"Restore `repo` in .egm/handoff.json or start a handoff in a new "
+        f"artifact directory.")
+  host = (handoff.state.get("confirmed") or {}).get("host")
+  if host and host != GH_HOSTNAME:
+    raise HandoffError(f"this handoff was created on {host}, not {GH_HOSTNAME}")
+  return repo
+
+
+def require_confirmed_plan(handoff) -> None:
+  """Refuse to read readiness off a plan edited since the confirmation.
+
+  `status` derives landed and ready from the graph it parses now, but the
+  receipt describes the issues on GitHub. Deleting a blocker locally would
+  otherwise make a unit ready while its issue is still blocked by it."""
+  confirmed = handoff.state.get("confirmed") or {}
+  if not confirmed.get("sha256"):
+    return
+  current = sha256_text(canonical(handoff.writes()))
+  if current != confirmed["sha256"]:
+    raise HandoffError(
+        f"{handoff.plan_path.name} no longer matches the confirmed snapshot "
+        f"({current[:12]} vs {confirmed['sha256'][:12]}): the issues on "
+        f"{confirmed.get('repo')} were created from the confirmed plan. Restore "
+        f"it, or run the gate and dry-run again and re-confirm.")
 
 
 def receipt_ok(state) -> bool:
@@ -1519,8 +1698,22 @@ def status_pass(handoff: Handoff):
              "units": {u: {"pr": v["pr"], "head": v["head"], "status": v["status"], "landed": v["landed"],
                            "candidates": v["candidates"]} for u, v in views.items()},
              "at": now_iso()}
-  state["status"] = summary
-  save_state(handoff.artifact_dir, state)
+  # A watcher sleeping between polls must not write back a stale copy of the
+  # whole file: the main conversation records decisions, launches and deferrals
+  # while it sleeps. Re-read, merge only the field this pass owns, save.
+  fresh = load_state(handoff.artifact_dir)
+  if fresh:
+    fresh["status"] = summary
+    for uid, record in (state.get("units") or {}).items():
+      if record.get("pr"):
+        fresh.setdefault("units", {}).setdefault(uid, {})["pr"] = record["pr"]
+      if record.get("landed_confirmed"):
+        fresh.setdefault("units", {}).setdefault(uid, {})["landed_confirmed"] = record["landed_confirmed"]
+    save_state(handoff.artifact_dir, fresh)
+    handoff.state = state = fresh
+  else:
+    state["status"] = summary
+    save_state(handoff.artifact_dir, state)
   return summary, open_blocking
 
 
@@ -1548,6 +1741,8 @@ def cmd_status(args):
   handoff = Handoff(plan)
   state = handoff.state
   require_receipt(state)
+  require_repo(handoff)
+  require_confirmed_plan(handoff)
   state.setdefault("units", {})
   for item in args.watch or []:
     uid, _, number = item.partition("=")
@@ -1584,6 +1779,8 @@ def cmd_launch(args):
   handoff = Handoff(plan)
   state = handoff.state
   require_receipt(state)
+  require_repo(handoff)
+  require_confirmed_plan(handoff)
   for uid in args.units:
     if uid not in handoff.plan.units:
       raise HandoffError(f"unknown unit {uid}")
@@ -1596,13 +1793,21 @@ def cmd_launch(args):
 def cmd_defer(args):
   plan = locate(args)
   handoff = Handoff(plan)
-  state, repo = handoff.state, handoff.config["repo"]
+  state, repo = handoff.state, require_repo(handoff)
   record = state.get("units", {}).get(args.unit) or {}
   if not record.get("number"):
     raise HandoffError(f"{args.unit} has no issue number in the state")
   old, new = handoff.wave_label(record.get("wave", handoff.graph.wave[args.unit])), handoff.wave_label(args.to_wave)
   if not LABEL_RE.match(new):
     raise HandoffError(f"invalid label {new}")
+  # `gh issue edit --add-label` fails on a label the repository does not have,
+  # and apply only ever created the waves the graph produced.
+  existing = {l["name"] for l in gh_pages(f"repos/{repo}/labels")}
+  if new not in existing:
+    raise HandoffError(
+        f"{repo} has no label `{new}` (apply created only waves "
+        f"{', '.join(handoff.wave_label(w) for w in sorted(handoff.graph.waves))}). "
+        f"Create it on {repo} first, then run defer again.")
   if not args.yes:
     print(f"would run: gh issue edit {record['number']} -R {repo} --remove-label {old} --add-label {new}")
     return 0
@@ -1667,6 +1872,52 @@ def registered_worktrees(root: Path):
   return paths
 
 
+def remove_worktree(root: Path, tree: Path) -> None:
+  """Remove a review worktree only when it is clean.
+
+  `--force` deletes tracked modifications and untracked files. The foreman
+  removes a worktree after every round, so a person editing it during a review
+  would lose that work without being asked."""
+  if not tree.exists():
+    run_git(["worktree", "prune"], root, check=False)
+    return
+  dirty = run_git(["status", "--porcelain"], tree, check=False).strip()
+  if dirty:
+    raise HandoffError(
+        f"the review worktree {tree} has uncommitted changes:\n  "
+        + "\n  ".join(dirty.splitlines()[:10])
+        + f"\nNothing was removed. Save or discard them, then remove it with "
+          f"`git -C {root} worktree remove {tree}`.")
+  run_git(["worktree", "remove", str(tree)], root)
+  run_git(["worktree", "prune"], root, check=False)
+
+
+def cmd_record_launch(args):
+  """Record `launched` and the run folder for a round.
+
+  The elephant runs this the moment the runner prints its folder. Without it
+  nothing persists between `prepared` and `collected` on the no-teams path:
+  the prepare subagent has already returned and the collect subagent is not
+  spawned until the run completes, so a session that ends in between restarts
+  the round and abandons a finished Astra run."""
+  plan = locate(args)
+  handoff = Handoff(plan)
+  data = load_foreman(handoff.artifact_dir, args.unit)
+  rounds = data.setdefault("rounds", {})
+  record = rounds.setdefault(str(args.round), {})
+  if args.not_run:
+    record.update({"phase": "launched", "run_folder": None,
+                   "status": f"not run ({args.not_run})", "at": now_iso()})
+  else:
+    folder = Path(args.run_folder).expanduser()
+    record.update({"phase": "launched", "run_folder": str(folder),
+                   "status": "running", "at": now_iso()})
+  save_foreman(handoff.artifact_dir, args.unit, data)
+  print(f"{args.unit} round {args.round}: {record['status']} "
+        f"({record['run_folder'] or 'no run folder'})")
+  return 0
+
+
 def cmd_prepare(args):
   plan = locate(args)
   handoff = Handoff(plan)
@@ -1682,7 +1933,7 @@ def cmd_prepare(args):
   tree = worktree_path(handoff.handoff_id, args.unit, number)
   if args.clean or args.remove:
     if tree.resolve() in registered_worktrees(root):
-      run_git(["worktree", "remove", "--force", str(tree)], root)
+      remove_worktree(root, tree)
     if args.clean:
       for ref in (f"refs/egm/pr/{number}", f"refs/egm/base/{number}"):
         subprocess.run(["git", "-C", str(root), "update-ref", "-d", ref], capture_output=True)
@@ -1713,7 +1964,7 @@ def cmd_prepare(args):
     if running:
       raise HandoffError(f"worktree {tree} belongs to a round still `launched`: mark its run folder "
                          "`not run (killed)` (foreman state) before preparing again")
-    run_git(["worktree", "remove", "--force", str(tree)], root)
+    remove_worktree(root, tree)
   tree.parent.mkdir(parents=True, exist_ok=True)
   run_git(["worktree", "add", "--detach", str(tree), pr["head"]], root)
   merge_base = run_git(["merge-base", pr["base_sha"], "HEAD"], tree).strip()
@@ -1808,6 +2059,12 @@ def build_parser():
   p.add_argument("--decision", required=True)
   p.add_argument("--answer", required=True)
   p.set_defaults(func=cmd_decide)
+  p = add("record-launch", "record `launched` and the run folder for a round")
+  p.add_argument("--unit", required=True)
+  p.add_argument("--round", type=int, default=1)
+  p.add_argument("--run-folder", dest="run_folder")
+  p.add_argument("--not-run", dest="not_run", help="record the lane as not run, with this reason")
+  p.set_defaults(func=cmd_record_launch)
   p = add("prepare", "fetch the PR into refs/egm, add a worktree, write the diff and CI file")
   p.add_argument("--unit", required=True)
   p.add_argument("--round", type=int, default=1)

@@ -246,8 +246,8 @@ def test_inspect_launch_line_is_fresh_and_unchained() -> None:
   launches = re.findall(r"^    python3 '<RUNNER>' inspect .*$", LANE, re.MULTILINE)
   assert len(launches) == 1
   launch = launches[0]
-  for flag in ("--host claude", "--builder claude", "--base <MERGE_BASE_SHA>",
-               "--plan '<ARTIFACT_DIR>/unit_<unit-id>.md'", "--timeout 2700"):
+  for flag in ("--host claude", "--base '<MERGE_BASE_SHA>'",
+               "--plan '<ARTIFACT_DIR>/unit_<unit-id>.md'", "--timeout 3600"):
     assert flag in launch, flag
   assert "--resume" not in launch
   assert not re.search(r"\$EGM_|&&|\||;|\s>", launch), launch
@@ -259,9 +259,10 @@ def test_inspect_launch_line_is_fresh_and_unchained() -> None:
 def test_bash_timeout_rule_in_both_launch_sections() -> None:
   flat = " ".join(LANE.split())
   assert "## 3b. Launch (pull request review)" in LANE
-  assert "Set the Bash tool's `timeout` above the runner's `--timeout`" in flat
-  assert "`2400` for a `--timeout 1800` review" in flat
-  assert "`3300` for a `--timeout 2700` inspect" in flat
+  assert "plus 300 seconds" in flat
+  assert "**in milliseconds**, at most 7,200,000: `2100000` for a `--timeout 1800`" in flat
+  assert "`3900000` for the `--timeout 3600` inspect" in flat
+  assert "is milliseconds, not seconds" in flat
 
 
 def test_inspect_data_notice() -> None:
@@ -319,3 +320,26 @@ def test_readme_states_the_lb_limit_and_the_new_skills() -> None:
   assert "gh auth login" in flat
   for text in ("skills/egm-handoff/SKILL.md", "skills/egm-wave/SKILL.md"):
     assert text in flat, text
+
+
+def test_launch_lines_agree_with_the_helper_and_the_wave_skill() -> None:
+  """The lane, the helper that writes the line and the skill that runs it must
+  name the same runner timeout and the same Bash timeout in milliseconds."""
+  helper = read("skills/egm-handoff/scripts/egm_handoff.py")
+  wave = read("skills/egm-wave/SKILL.md")
+  assert "--timeout 3600" in helper and "3900000" in helper
+  assert "3,900,000 ms" in wave
+  launch = re.search(r"^    python3 '<RUNNER>' inspect .*$", LANE, re.MULTILINE).group(0)
+  assert "--builder" not in launch
+  assert '--artifacts "${TMPDIR:-/tmp}/egm-astra"' in launch
+
+
+def test_handoff_gate_panel_matches_the_handoff_skill() -> None:
+  flat = " ".join(PANELS.split())
+  skill = " ".join(read("skills/egm-handoff/SKILL.md").split())
+  assert "| Focused (default) | `egm-implementation-readiness` |" in skill
+  assert "Focused plus `egm-codebase-details`" in skill
+  assert ("| Handoff gate (the handoff plan, before any GitHub write) | 10 | Astra lane "
+          "| `egm-implementation-readiness` + Astra lane | "
+          "`egm-implementation-readiness`, `egm-codebase-details` + Astra lane |") in flat
+  assert "`egm-design` + Astra lane |" not in flat.split("Handoff gate")[1][:400]

@@ -205,8 +205,13 @@ class FakeGitHub:
     if args[1] == "edit":
       self.assert_write()
       issue = self.issues[int(args[2])]
+      added = args[args.index("--add-label") + 1]
+      if added not in self.labels:
+        # The real gh refuses a label the repository does not have; a fake that
+        # appends it hides exactly the bug this guards.
+        return 1, "", f"could not add label: '{added}' not found (HTTP 422)"
       issue["labels"] = [l for l in issue["labels"] if l != args[args.index("--remove-label") + 1]]
-      issue["labels"].append(args[args.index("--add-label") + 1])
+      issue["labels"].append(added)
       return self.ok(text="")
     raise AssertionError(args)
 
@@ -479,7 +484,8 @@ def test_approve_checks_and_records(world):
   assert state_of(world)["approval"]["answer"] == "Approve"
   design.write_text(DESIGN + "\nchanged\n", encoding="utf-8")
   code, out = world.run("approve", "--design", design, "--artifacts", world.artifacts)
-  assert code == 1 and "not tracked and clean" in out
+  assert code == 1 and "tracked but not clean" in out
+
   code, out = world.run("graph", "--plan", world.plan)
   assert code == 1 and "design changed since the handoff started: re-run the gate" in out
   git(["checkout", "--", "docs/designs/sample.md"], world.repo)
@@ -488,6 +494,15 @@ def test_approve_checks_and_records(world):
   git(["commit", "-qm", "plain"], world.repo)
   code, out = world.run("approve", "--design", world.repo / "docs/designs/plain.md", "--artifacts", world.artifacts)
   assert code == 1 and "Detailed Implementation Plan" in out and "egm-draft" in out
+
+
+def test_approve_refuses_an_untracked_or_ignored_design(world):
+  """A clean `git status -- <path>` says nothing about an ignored file."""
+  design = world.repo / "docs/designs/ignored.md"
+  design.write_text(DESIGN, encoding="utf-8")
+  (world.repo / ".gitignore").write_text("docs/designs/ignored.md\n", encoding="utf-8")
+  code, out = world.run("approve", "--design", design, "--artifacts", world.artifacts)
+  assert code == 1 and "not tracked by git" in out
 
 
 # --------------------------------------------------------------------- gate
@@ -834,11 +849,21 @@ def test_status_wait_returns_on_change_or_deadline(world):
 
 def test_defer_edits_one_label_and_verifies(world):
   gh = applied(world)
+  gh.labels["egm:wave-4"] = {"name": "egm:wave-4", "color": "1b6ef3"}
   code, out = world.run("defer", "--plan", world.plan, "--unit", "U03", "--to-wave", 4)
   assert code == 0 and "would run" in out and not any(c[:2] == ["issue", "edit"] for c in gh.calls)
   code, out = world.run("defer", "--plan", world.plan, "--unit", "U03", "--to-wave", 4, "--yes")
   assert code == 0 and "egm:wave-4" in gh.issues[4]["labels"] and "egm:wave-3" not in gh.issues[4]["labels"]
   assert state_of(world)["units"]["U03"]["wave"] == 4
+
+
+def test_defer_refuses_a_wave_label_the_repository_does_not_have(world):
+  """apply creates only the waves the graph produced, so deferring past the
+  last wave would ask gh to add a label that does not exist."""
+  gh = applied(world)
+  code, out = world.run("defer", "--plan", world.plan, "--unit", "U03", "--to-wave", 9, "--yes")
+  assert code == 1 and "has no label `egm:wave-9`" in out
+  assert not any(c[:2] == ["issue", "edit"] for c in gh.calls)
 
 
 # ------------------------------------------------------------------ prepare
@@ -994,3 +1019,161 @@ def test_subprocess_command_shape_with_fake_gh_on_path(tmp_path, capsys):
   assert all("-R" not in l for l in log if l[0] in ("api", "auth"))
   assert all("-R" in l for l in log if l[0] in ("issue", "label"))
   assert all("--paginate" in l for l in log if l[0] == "api" and l[1].endswith(("/labels", "/sub_issues", "/blocked_by")) and "POST" not in l)
+
+
+# --------------------------------------------- inspection round 1 regressions
+
+
+def test_gh_is_pinned_to_github_com_whatever_gh_host_says(monkeypatch):
+  """R03: GH_HOST would send writes to an enterprise server that no approval,
+  remote check or confirmed destination in this helper ever looked at."""
+  ns = runpy.run_path(str(HELPER))
+  monkeypatch.setenv("GH_HOST", "github.enterprise.invalid")
+  monkeypatch.setenv("GH_ENTERPRISE_TOKEN", "tok")
+  env = ns["gh_env"]()
+  assert env["GH_HOST"] == "github.com"
+  assert "GH_ENTERPRISE_TOKEN" not in env
+
+
+def test_state_is_written_atomically_and_a_poll_keeps_other_writers_fields(world):
+  """R01: a watcher that saves its whole in-memory copy erases a decision or a
+  launch the main conversation recorded while it slept."""
+  gh = applied(world)
+  assert world.run("verify", "--plan", world.plan)[0] == 0
+  # another writer records a decision while a poll is in flight
+  assert world.run("decide", "--plan", world.plan, "--unit", "U03",
+                   "--decision", "D2", "--answer", "50")[0] == 0
+  assert world.run("launch", "--plan", world.plan, "--wave", 1, "--units", "U01")[0] == 0
+  assert world.run("status", "--plan", world.plan)[0] == 0
+  after = state_of(world)
+  assert after["decisions"]["U03/D2"]["answer"] == "50"
+  assert after["units"]["U01"]["launched"]["wave"] == 1
+  assert after["units"]["U01"]["number"]
+  # no temporary file is left behind by the atomic replace
+  assert not list(world.artifacts.glob("handoff_state.json.tmp*"))
+
+
+def test_operations_refuse_a_repository_the_numbers_do_not_belong_to(world):
+  """R02: issue numbers are not portable; only apply checked the destination."""
+  applied(world)
+  assert world.run("verify", "--plan", world.plan)[0] == 0
+  config = world.repo / ".egm/handoff.json"
+  config.write_text(json.dumps({"repo": "other/elsewhere",
+                                "banned_terms": ["(?i)secret-codename"]}), encoding="utf-8")
+  git(["remote", "set-url", "origin", "https://github.com/other/elsewhere.git"], world.repo)
+  for argv in (("status", "--plan", world.plan),
+               ("defer", "--plan", world.plan, "--unit", "U03", "--to-wave", 2, "--yes")):
+    code, out = world.run(*argv)
+    assert code == 1 and "not portable between repositories" in out, argv
+
+
+def test_verify_refuses_a_plan_edited_since_the_confirmation(world):
+  """R08: a receipt must describe what the user confirmed, not a plan since
+  edited, or removing a blocker locally would make a unit look ready."""
+  applied(world)
+  assert world.run("verify", "--plan", world.plan)[0] == 0
+  world.plan.write_text(world.plan.read_text(encoding="utf-8")
+                        .replace("| Blocked by | U01 |", "| Blocked by | none |"), encoding="utf-8")
+  # verify reports on what was confirmed, so it stays clean...
+  code, out = world.run("verify", "--plan", world.plan)
+  assert code == 0 and "MISMATCH" not in out, out
+  # ...and readiness, which the edit would have changed, is refused outright
+  for argv in (("status", "--plan", world.plan),
+               ("launch", "--plan", world.plan, "--wave", 1, "--units", "U03")):
+    code, out = world.run(*argv)
+    assert code == 1 and "no longer matches the confirmed snapshot" in out, argv
+
+
+def test_apply_scans_again_with_the_current_rules(world):
+  """R11: a banned_terms rule added after the dry run leaves the write list,
+  and therefore its hash, untouched."""
+  dry_run(world)
+  config = world.repo / ".egm/handoff.json"
+  config.write_text(json.dumps({"repo": REPO, "banned_terms": ["(?i)webhook"]}), encoding="utf-8")
+  code, out = world.run("apply", "--plan", world.plan, "--yes")
+  assert code == 1 and "the current scan refuses" in out
+  assert not any(c[:2] == ["issue", "create"] for c in world.gh.calls)
+
+
+def test_a_new_design_may_not_reuse_an_artifact_directory_with_issues(world):
+  """R07: creation, decision and verification records are not transferable."""
+  applied(world)
+  design = world.repo / "docs/designs/sample.md"
+  design.write_text(DESIGN.replace("# Webhook", "# Webhook v2"), encoding="utf-8")
+  git(["commit", "-qam", "v2"], world.repo)
+  code, out = world.run("graph", "--plan", world.plan)
+  assert code == 1
+  assert "already holds handoff" in out and "new artifact directory" in out
+
+
+def test_scanner_respects_fence_lengths(world):
+  """R12: GFM closes a fence only with a run at least as long as its opener, so
+  a four-backtick block may contain a bare ``` line."""
+  scan = world.ns["scan_text"]
+  config = {"banned_terms": ["(?i)secret-codename"], "fix_request_mention": None}
+  body = "````\n```\n````\n@alice and secret-codename\n"
+  problems = scan(body, config, "body")
+  assert any("bare mention @alice" in p for p in problems), problems
+  assert any("banned term" in p for p in problems), problems
+  # a genuine fenced block still hides its contents
+  assert scan("```\n@alice secret-codename\n```\n", config, "body") == []
+
+
+def test_duplicate_decision_ids_in_one_unit_are_refused(world):
+  """R15: two blocking questions sharing an id share one state key, so
+  answering the first would release the unit while the second is open."""
+  world.plan.write_text(world.plan.read_text(encoding="utf-8").replace(
+      "- D2 Page size for the listing? owner: the user; default: 50; blocking: yes",
+      "- D2 Page size for the listing? owner: the user; default: 50; blocking: yes\n"
+      "- D2 Retry budget? owner: the user; default: 3; blocking: yes"), encoding="utf-8")
+  code, out = world.run("graph", "--plan", world.plan)
+  assert code == 1 and "two" in out and "D2" in out
+
+
+def test_the_posted_body_never_changes_when_a_decision_is_answered(world):
+  """R09: decide re-rendered the body verify compares against, so answering a
+  question reported a mismatch and blocked the wave."""
+  applied(world)
+  assert world.run("verify", "--plan", world.plan)[0] == 0
+  assert world.run("decide", "--plan", world.plan, "--unit", "U03",
+                   "--decision", "D2", "--answer", "50")[0] == 0
+  code, out = world.run("verify", "--plan", world.plan)
+  assert code == 0 and "MISMATCH" not in out, out
+  unit_file = (world.artifacts / "unit_U03.md").read_text(encoding="utf-8")
+  assert "Decisions answered since the issue was posted" in unit_file
+  assert "Decision: 50" in unit_file
+
+
+def test_a_dirty_review_worktree_is_never_force_removed(world, tmp_path):
+  """R04: the foreman removes a worktree after every round; --force would
+  delete someone's uncommitted work without asking."""
+  remove = world.ns["remove_worktree"]
+  HandoffError = world.ns["HandoffError"]
+  root = make_repo(tmp_path / "wt-root")
+  tree = tmp_path / "wt-copy"
+  git(["worktree", "add", "-q", str(tree)], root)
+  (tree / "scratch.txt").write_text("unsaved\n", encoding="utf-8")
+  with pytest.raises(HandoffError) as caught:
+    remove(root, tree)
+  assert "uncommitted changes" in str(caught.value)
+  assert (tree / "scratch.txt").is_file()
+  (tree / "scratch.txt").unlink()
+  remove(root, tree)
+  assert not tree.exists()
+
+
+def test_record_launch_persists_the_run_folder_before_the_wait(world):
+  """R18: nothing persisted between `prepared` and `collected` on the no-teams
+  path, so a session ending in between redid the round."""
+  applied(world)
+  assert world.run("record-launch", "--plan", world.plan, "--unit", "U01",
+                   "--round", 2, "--run-folder", "/tmp/egm-astra/claudex-abc")[0] == 0
+  data = json.loads((world.artifacts / "foreman_U01_state.json").read_text(encoding="utf-8"))
+  assert data["rounds"]["2"]["phase"] == "launched"
+  assert data["rounds"]["2"]["run_folder"].endswith("claudex-abc")
+  assert data["rounds"]["2"]["status"] == "running"
+  assert world.run("record-launch", "--plan", world.plan, "--unit", "U01",
+                   "--round", 3, "--not-run", "denied")[0] == 0
+  data = json.loads((world.artifacts / "foreman_U01_state.json").read_text(encoding="utf-8"))
+  assert data["rounds"]["3"]["status"] == "not run (denied)"
+  assert data["rounds"]["2"]["run_folder"], "an earlier round must survive"

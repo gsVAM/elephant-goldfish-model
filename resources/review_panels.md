@@ -165,10 +165,10 @@ Two reviews of the fork's handoff and wave skills reuse the same panels:
 
 | Review | Stage | Astra only | Focused (default) | Full |
 | --- | --- | --- | --- | --- |
-| Handoff gate (the handoff plan, before any GitHub write) | 10 | Astra lane | `egm-design` + Astra lane | `egm-zoom-out`, `egm-design`, `egm-implementation-readiness` + Astra lane |
+| Handoff gate (the handoff plan, before any GitHub write) | 10 | Astra lane | `egm-implementation-readiness` + Astra lane | `egm-implementation-readiness`, `egm-codebase-details` + Astra lane |
 | PR review (one pull request against one build unit) | - | Astra inspect | `egm-change-review` + Astra inspect | `egm-change-review`, `egm-codebase-details` + Astra inspect |
 
-The handoff gate uses `handoff-standard.md` and runs like Stages 7 and 9: its
+Both reviews use `handoff-standard.md` for their Claude goldfish; `egm-codebase-details` runs in REVIEW mode so that scope paths, symbols and callers are checked to exist as the units assume. The handoff gate and runs like Stages 7 and 9: its
 Claude reviewers go to `egm-review-loop` as `Reviewers` with `Stage: 10`, and
 its stop rule is the same, no open high or medium. The PR review is run by the
 foreman, uses the inspect launch of `resources/astra_lane.md` section 3b, and

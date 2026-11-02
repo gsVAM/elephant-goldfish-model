@@ -135,9 +135,12 @@ hash); `--timeout 1800` leaves headroom over the slowest measured `xhigh` run;
 `--artifacts` must be outside the repository. `TMPDIR` is the only variable
 the command expands.
 
-- Set the Bash tool's `timeout` above the runner's `--timeout` with headroom
-  (`2400` for a `--timeout 1800` review): the host stops a background command
-  at its own limit, and a stopped runner leaves no result to collect.
+- Set the Bash tool's `timeout` to the runner's `--timeout` plus 300 seconds,
+  **in milliseconds**, at most 7,200,000: `2100000` for a `--timeout 1800`
+  review. The Bash tool's `timeout` is milliseconds, not seconds, and a
+  background command in a `-p` run stops after 30 minutes by default (10 when
+  the prompt is passed as text); a run stopped that way ends as
+  `not run (killed)` and leaves no result to collect.
 - If a path contains a single quote, record `not run (path quoting)`.
 - If the user denies the command, record `not run (denied)` and do not launch
   again in this review.
@@ -152,18 +155,21 @@ A wave's pull request review uses the runner's `inspect` subcommand instead of
 `review`: the target is a change, not a document. The same rules as section 3
 apply — this main conversation only, `run_in_background: true`, one command,
 absolute paths in single quotes, no chaining, pipes, redirects or extra flags,
-validated literals never `$EGM_...`, and the Bash tool's `timeout` above the
-runner's with headroom (`3300` for a `--timeout 2700` inspect). The foreman
-prepares the brief and this line but never runs it: a teammate cannot start a
-background command.
+validated literals never `$EGM_...`, and the Bash tool's `timeout` set to the
+runner's `--timeout` plus 300 seconds in milliseconds: `3900000` for the
+`--timeout 3600` inspect. The foreman prepares the brief and this line but
+never runs it: a teammate cannot start a background command. The helper's
+`prepare` writes the exact line and that Bash timeout into
+`foreman_<unit-id>_r<round>_launch.md`; check it against this section rather
+than composing it by hand.
 
 Always a fresh session. An inspect run is never resumed: each round reviews a
 new head, and `--base` already carries what changed.
 
-    python3 '<RUNNER>' inspect --host claude --builder claude --repo '<WORKTREE>' --base <MERGE_BASE_SHA> --plan '<ARTIFACT_DIR>/unit_<unit-id>.md' --feedback '<ARTIFACT_DIR>/astra_brief_w<wave>_u<unit-id>_r<round>.md' --model <ASTRA_MODEL> --effort <ASTRA_EFFORT> --timeout 2700 --artifacts '<ARTIFACT_DIR>/astra/u<unit-id>-r<round>'
+    python3 '<RUNNER>' inspect --host claude --repo '<WORKTREE>' --plan '<ARTIFACT_DIR>/unit_<unit-id>.md' --base '<MERGE_BASE_SHA>' --feedback '<ARTIFACT_DIR>/astra_brief_w<wave>_u<unit-id>_r<round>.md' --model <ASTRA_MODEL> --effort <ASTRA_EFFORT> --timeout 3600 --artifacts "${TMPDIR:-/tmp}/egm-astra"
 
-Flags that differ from section 3: `--builder claude` names who wrote the
-change; `--repo` is the prepared review worktree, not the user's checkout;
+Flags that differ from section 3: `--repo` is the prepared review worktree,
+not the user's checkout;
 `--base` is the merge base the foreman recorded, so the runner reads exactly
 the pull request's diff; `--plan` is the unit file, which carries the
 objective, the scope paths and the definition of done. There is no `--resume`.
