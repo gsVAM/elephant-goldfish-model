@@ -51,3 +51,31 @@ scenarios:
           - type: "required_pattern"
             pattern: "(?i)not run"
             message: "A requested reviewer with no status must count as not run, so the round is not clean."
+
+  # Modified by the elephant-goldfish-model Astra fork (gsVAM), 2026: Astra lane scenarios.
+  - scenario_id: "astra_lane_failure_is_optional"
+    description: "Verifies an Astra lane that did not complete is recorded as not run and does not make the round unclean."
+    eval_type: "deterministic"
+    system_prompt:
+      skill_file: "skills/egm-review-loop/SKILL.md"
+    turns:
+      - user_input: "Round 2 on docs/design.md, Focused panel: the Claude reviewers completed with two Nits; the Astra lane timed out. Is round 2 clean?"
+        assertions:
+          - type: "required_pattern"
+            pattern: "(?i)not run"
+            message: "The Astra lane must be recorded as not run with its reason."
+          - type: "required_pattern"
+            pattern: "(?i)(clean|claude-only)"
+            message: "A lane that did not run does not make the round unclean; the round is judged on the Claude reviewers."
+
+  - scenario_id: "astra_medium_blocks_clean_round"
+    description: "Verifies an Astra medium finding maps to Major and blocks a clean round."
+    eval_type: "deterministic"
+    system_prompt:
+      skill_file: "skills/egm-review-loop/SKILL.md"
+    turns:
+      - user_input: "Round 1 on docs/design.md: the Claude reviewers found only Nits; Astra completed REVISE with one new medium finding. Is the round clean?"
+        assertions:
+          - type: "required_pattern"
+            pattern: "(?i)(major|not clean)"
+            message: "An Astra medium finding is a Major and blocks a clean round."

@@ -1,4 +1,5 @@
 <!-- Copyright 2026 Google LLC. SPDX-License-Identifier: Apache-2.0 -->
+<!-- Modified by the elephant-goldfish-model Astra fork (gsVAM), 2026: Astra lane section, fork issue tracker. -->
 
 # EGM data handling
 
@@ -30,6 +31,27 @@ package registry or another service. Inspect and authorize those commands using
 the host's permission controls. EGM's runtime declares no MCP server and installs
 no permission-approval hook.
 
+## Astra lane (fork addition)
+
+In Claude Code, the fork can run one review lane through the claudex-loop
+runner and the Codex CLI. When it runs, these leave the machine and go to
+OpenAI under the account `codex login status` reports, on that account's terms:
+the whole target design document (not only the reviewed range), the review
+brief EGM writes (including the standard text and, on a resumed round, the
+dispositions file), the runner's fixed instructions, any file the user's OS
+account can read that Astra opens inside or outside the repository (the
+read-only sandbox blocks writes, not reads), and the user's Codex `AGENTS.md`
+and memories. The Claude conversation and the Claude reviewers' findings are
+not sent.
+
+The lane runs only after a run card with this notice is shown, and only when
+the claudex-loop runner, the Codex CLI and a Codex login are present. Opt out
+with `EGM_ASTRA=off` in settings (a project's settings can override a user's,
+so the hard opt-outs are `codex logout`, `EGM_ASTRA=off` in managed settings,
+or not installing claudex-loop). Local copies of each prompt and reply stay in
+`${TMPDIR:-/tmp}/egm-astra`; the brief and dispositions files stay in the
+artifact folder. They may contain private code; delete them when done.
+
 ## Development tools
 
 The source repository also contains opt-in integration tests. When explicitly
@@ -39,7 +61,7 @@ packages. Website and development tooling are also excluded.
 
 ## Questions
 
-Use the [issue tracker](https://github.com/google/elephant-goldfish-model/issues)
+Use the [issue tracker](https://github.com/gsVAM/elephant-goldfish-model/issues)
 for general questions. Do not include credentials, private documents, or personal
 data in public reports. This notice describes the plugin's data flow; it does
 not replace the privacy policies of the host or services the user invokes.

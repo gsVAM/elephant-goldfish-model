@@ -1,12 +1,12 @@
 {
   "name": "egm",
-  "version": "0.1.0",
-  "description": "Draft specs, review designs, and check implementation drift.",
+  "version": "0.1.1",
+  "description": "Draft specs, review designs, and check implementation drift. Modified by the elephant-goldfish-model Astra fork (gsVAM), 2026: Astra review lane, panel presets, run card.",
   "author": {
-    "name": "Google"
+    "name": "gsVAM"
   },
-  "homepage": "https://egm.dev",
-  "repository": "https://github.com/google/elephant-goldfish-model",
+  "homepage": "https://github.com/gsVAM/elephant-goldfish-model",
+  "repository": "https://github.com/gsVAM/elephant-goldfish-model",
   "license": "Apache-2.0",
   "extensions": {
     "com.openai": {
@@ -14,15 +14,15 @@
       "interface": {
         "displayName": "Elephant-Goldfish Model",
         "shortDescription": "Draft and stress-test specs",
-        "longDescription": "Draft specs, review designs with fresh-context reviewers, resolve findings, and check implementation drift. Uses your host's models and permissions. Reviews require isolated subagents; cloud support remains partial. Not an officially supported Google product.",
-        "developerName": "Google",
+        "longDescription": "Draft specs, review designs with fresh-context reviewers, resolve findings, and check implementation drift. Uses your host's models and permissions. Reviews require isolated subagents; cloud support remains partial. Not an officially supported Google product. Modified by the elephant-goldfish-model Astra fork (gsVAM), 2026: adds an optional GPT-6 Astra review lane through the claudex-loop runner in Claude Code, review panel presets, and a run card. See the README section About this fork.",
+        "developerName": "gsVAM",
         "brandColor": "#1B6EF3",
         "category": "Developer Tools",
         "capabilities": ["Draft specifications", "Review designs", "Check implementation drift"],
-        "websiteURL": "https://egm.dev",
-        "supportURL": "https://github.com/google/elephant-goldfish-model/issues",
-        "privacyPolicyURL": "https://github.com/google/elephant-goldfish-model/blob/main/docs/privacy.md",
-        "termsOfServiceURL": "https://github.com/google/elephant-goldfish-model/blob/main/LICENSE",
+        "websiteURL": "https://github.com/gsVAM/elephant-goldfish-model",
+        "supportURL": "https://github.com/gsVAM/elephant-goldfish-model/issues",
+        "privacyPolicyURL": "https://github.com/gsVAM/elephant-goldfish-model/blob/main/docs/privacy.md",
+        "termsOfServiceURL": "https://github.com/gsVAM/elephant-goldfish-model/blob/main/LICENSE",
         "composerIcon": "./assets/icon.svg",
         "logo": "./assets/icon.svg"
       }

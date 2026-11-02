@@ -1,5 +1,7 @@
 # Test Plan: Goldfish Review Loop Skill
 
+<!-- Modified by the elephant-goldfish-model Astra fork (gsVAM), 2026: Astra lane checklist item. -->
+
 Frontmatter and link checks run in `pytest tests/unit` (see [TESTING.md](../../TESTING.md)).
 
 ## Protocol Verification Checklist
@@ -11,3 +13,4 @@ When evaluating or exploring `egm-review-loop` interactively in chat, verify:
 -   **Step 2.2 (Review Swarm):** Spawns subagents (or sequentially iterates personas in degraded mode) across requested standards.
 -   **Step 2.3 & 2.4 (Resolve Handoff & Turn Boundary):** Hands findings to `egm-resolve` and respects human decision gates.
 -   **Step 2.4 (Round Control):** Keeps contested and accepted findings settled, re-opens fixed findings that reviewers raise again, judges clean rounds before applying fixes, records failed reviewers (and reviewers with no status in the synthesizer summary) as not run, stops after two consecutive clean rounds, and asks the user at the 5-round cap or on churn.
+-   **Astra lane (fork):** With `AstraLane: on`, launches the runner from the main context before the Claude swarm, waits for it, maps high/medium/low to Blocker/Major/Nit with ids `astra-<round>-<n>`, records a lane that did not complete as not run without making the round unclean (except in the Astra only panel), passes `Round` and `RunCard` to `egm-resolve`, and resumes only an eligible previous round.

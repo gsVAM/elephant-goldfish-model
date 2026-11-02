@@ -1,13 +1,13 @@
 {
-  "name": "egm",
+  "name": "egm-astra",
   "owner": {
-    "name": "Google"
+    "name": "gsVAM"
   },
   "plugins": [
     {
       "name": "egm",
       "source": "./",
-      "description": "Draft specs, review designs, and check implementation drift."
+      "description": "Draft specs, review designs, and check implementation drift. Modified by the elephant-goldfish-model Astra fork (gsVAM), 2026: Astra review lane, panel presets, run card."
     }
   ]
 }

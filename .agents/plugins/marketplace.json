@@ -1,7 +1,7 @@
 {
-  "name": "egm",
+  "name": "egm-astra",
   "interface": {
-    "displayName": "Elephant-Goldfish Model"
+    "displayName": "Elephant-Goldfish Model (Astra fork, gsVAM 2026)"
   },
   "plugins": [
     {

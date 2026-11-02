@@ -11,6 +11,8 @@ description: >-
   and tone.
 ---
 
+<!-- Modified by the elephant-goldfish-model Astra fork (gsVAM), 2026: Astra lane, per-reviewer model and effort, persisted dispositions. -->
+
 # Goldfish Review: Loop (Orchestration Driver)
 
 When running in Codex or ChatGPT Work, first read [Codex integration](../../docs/codex.md).
@@ -55,6 +57,11 @@ The caller or user provides exactly these parameters:
     paths).
 *   **`GoldfishContext`**: A reading list (source files, directories, or
     documentation URLs) fed to reviewers to establish their baseline.
+*   **Fork inputs (optional)**: `AstraLane` (`on` or `off`, default `off`),
+    `Stage` (`7` or `9`, for the Astra brief), `RunCard` (text for the top of
+    every report), `GoldfishModel` and `GoldfishEffort` (see
+    `resources/review_panels.md` section 6). `Reviewers` may be empty when
+    the panel is Astra only; then skip the Claude swarm and run the lane alone.
 
 ## Path & Standard Resolution Logic
 
@@ -108,8 +115,14 @@ file` mode is specified, confirm full-file line bounds).
 
 #### 2.2 Review Swarm Execution
 
+0.  **Astra lane (fork, Claude Code only)**: When `AstraLane` is `on`, read
+    `resources/astra_lane.md` and follow it before you spawn the Claude
+    reviewers: write the brief, decide fresh or resume (its section 7), and
+    start one background command from this main context, never from a
+    subagent.
 1.  **Launch Subagent Swarm**:
-    Spawn subagents to execute the review:
+    Spawn subagents to execute the review. Pass `GoldfishModel` and
+    `GoldfishEffort` per call as `resources/review_panels.md` section 6 says:
     *   **Hierarchical Dispatch (Synthesizer)**: Spawn the intermediate
         synthesizer subagent (`agents/synthesizer.md` / `egm-synthesizer`).
         The synthesizer spawns the Goldfish review swarm in
@@ -128,17 +141,25 @@ file` mode is specified, confirm full-file line bounds).
 2.  **Consolidate Findings**: Collect all findings across reviewers into a single
     flat `FindingsList`. Give each finding a stable id
     (`<reviewer>-<round>-<n>`) and record its reviewer, severity, and affected
-    scope.
+    scope. When the Astra lane ran, wait for it (`resources/astra_lane.md`
+    section 4), then add its findings with ids `astra-<round>-<n>`, mapping
+    high, medium and low to Blocker, Major and Nit (its section 6), and put
+    the run card and the Astra status line at the top of the report.
 3.  **Failed Reviewers**: A reviewer that times out, fails, or returns no report
     did not review. Retry it once. If it fails again, record it as **not run**
     in the report. Never count it as a reviewer with zero findings. If the
     synthesizer summary has no status for a requested reviewer, record that
-    reviewer as not run.
+    reviewer as not run. The Astra lane is the exception: when it does not
+    complete, record it as not run with the reason and do not retry it in
+    this round.
 
 #### 2.3 Aggregated Resolution Hand-off
 
-1.  Pass `TargetFile`, the active line range, and the aggregated `FindingsList`
-    to the **`egm-resolve`** workflow.
+1.  Pass `TargetFile`, the active line range, the aggregated `FindingsList`,
+    the round number as `Round` and the `RunCard` to the **`egm-resolve`**
+    workflow. It writes the user's final decisions to
+    `goldfish_dispositions_round_<n>.md`; a resumed Astra round reads that
+    file.
 2.  Execute the resolution workflow in the primary Elephant context:
     *   Categorize findings into `CONTEST` vs. `PROPOSE FIX`.
     *   Save `goldfish_review_report.md` with your file-writing tool.
@@ -161,7 +182,11 @@ is rare even when the document improves. Use these rules instead:
 *   **Clean round**: A round is clean when no reviewer raises a Blocker or
     Major finding that is not settled. Nits do not block. A reviewer recorded
     as not run makes the round not clean. Decide this from the review results,
-    before you apply the fixes of that round.
+    before you apply the fixes of that round. The optional Astra lane is the
+    exception: when it did not run, judge the round on the Claude reviewers
+    and say the round was Claude-only. In the Astra only panel it is the only
+    reviewer, so a round in which it did not complete is not clean; after two
+    such rounds, follow `resources/astra_lane.md` section 5.
 *   **Converged**: Two consecutive clean rounds. One clean round is not enough,
     because the next fresh reviewer can find a different gap in the same text.
 *   **Cap**: 5 rounds.

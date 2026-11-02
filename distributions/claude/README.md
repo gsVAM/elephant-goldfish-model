@@ -13,6 +13,47 @@
 
 <br>
 
+## About this fork
+
+<!-- Modified by the elephant-goldfish-model Astra fork (gsVAM), 2026: this section and the install commands. -->
+
+This repository is a modified version of [google/elephant-goldfish-model](https://github.com/google/elephant-goldfish-model) (upstream 0.1.0), maintained by gsVAM. Google does not endorse it. For Claude Code it adds:
+
+- **An Astra lane.** GPT-6 Astra reviews the design at Stage 7 (Critic) and Stage 9 (Implementation Readiness) through the [claudex-loop](https://github.com/chaseai-yt/claudex-loop) runner, beside the Claude reviewers. Its high and medium findings block a clean round like any reviewer's. A lane that cannot run never blocks a Claude-only review.
+- **Panel presets.** Every review asks for the panel together with the review mode: *Astra only* (one adversarial read), *Focused* (default: Claude design critic plus Astra at Stage 7, Claude readiness reviewer plus Astra at Stage 9) or *Full* (every upstream reviewer, Stages 5 to 9, plus Astra).
+- **A run card.** Before the review: who each role is, what context it has, and its requested and effective model and effort. The card is repeated at the top of every report with what actually ran.
+- **Per-reviewer model and effort** for the Claude goldfish, from `EGM_GOLDFISH_MODEL` and `EGM_GOLDFISH_EFFORT`.
+- **Persisted dispositions.** `egm-resolve` writes your final decision per finding to `goldfish_dispositions_round_<n>.md`; a resumed Astra round reads it.
+
+**Prerequisites for the Astra lane** (without them the review runs Claude-only and says so): the claudex-loop plugin (2.1.0 or later) installed in Claude Code, Codex CLI 0.153.4 or later on `PATH`, `codex login` completed, and Python 3.10 or later as `python3`.
+
+**Configuration.** Environment variables, each checked against an allowlist before use; anything else is ignored with a warning and never reaches a shell command:
+
+| Variable | Default | Values |
+| --- | --- | --- |
+| `EGM_ASTRA` | `on` when the prerequisites are met | `on`, `off` |
+| `EGM_PANEL` | `focused` | `astra`, `focused`, `full` |
+| `EGM_ASTRA_MODEL` | `gpt-6-astra` | `^[a-z0-9][a-z0-9.\-]{1,63}$` |
+| `EGM_ASTRA_EFFORT` | `xhigh` | `low`, `medium`, `high`, `xhigh` |
+| `EGM_ASTRA_MEMORY` | `resume` | `resume`, `fresh` |
+| `EGM_GOLDFISH_MODEL` | `inherit` | `inherit`, `sonnet`, `opus`, `haiku`, `fable` |
+| `EGM_GOLDFISH_EFFORT` | `inherit` | `inherit`, `low`, `medium`, `high`, `xhigh`, `max` |
+
+**Data notice.** When the Astra lane runs, the whole target file, the review brief, any file your OS account can read that Astra opens, and your Codex `AGENTS.md` and memories go to OpenAI under the account `codex login status` reports. Set `EGM_ASTRA=off` or run `codex logout` to prevent this. Details: [docs/privacy.md](docs/privacy.md).
+
+**Install from this fork** (Claude Code):
+
+```sh
+claude plugin marketplace add gsVAM/elephant-goldfish-model
+claude plugin install egm@egm-astra
+```
+
+The marketplace is named `egm-astra` so it can coexist with Google's `egm` marketplace; the plugin keeps the name `egm` and the commands stay `/egm:egm-*`. To install for every Claude Code configuration folder on a machine (for example `~/.claude` and a folder chosen with `CLAUDE_CONFIG_DIR`), run both commands once per folder with `CLAUDE_CONFIG_DIR` set to it. Where managed settings come from the claude.ai admin console, a local managed-settings file is ignored, so an organization-wide install goes through the console. The claudex-loop plugin is installed separately by each user who wants the lane.
+
+**Licence.** Apache-2.0, unchanged (`LICENSE`). As required by section 4(b), these upstream files were modified and each carries a change notice: `README.md`, `docs/claude.md`, `docs/privacy.md`, `docs/harnesses.md`, `docs/codex.md`, `resources/README.md`, `skills/egm-review/SKILL.md`, `skills/egm-review-loop/SKILL.md`, `skills/egm-review-loop/TEST.md`, `skills/egm-review-loop/test_scenarios.yaml`, `skills/egm-resolve/SKILL.md`, `plugin.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.codex-plugin/plugin.json`, `.agents/plugins/marketplace.json`, `tests/unit/test_harnesses.py`. Added: `resources/astra_lane.md`, `resources/review_panels.md`, `tests/unit/test_astra_fork.py`. `distributions/claude` is regenerated from these sources. Google's copyright notices are kept. Upstream's README follows.
+
+---
+
 Thousands of Google engineers use EGM, an open-source plugin, to draft specs with deep-context agents and stress-test them with zero-context subagents before writing code.
 
 **Elephant** holds your project context and drafts the specification. **Goldfish** reviewers examine the draft and referenced source material without the earlier conversation, helping expose unstated assumptions and blind spots. **You** make the architectural trade-offs and approve the specification before implementing.
@@ -26,7 +67,7 @@ Choose your coding agent. Install the complete plugin so its skills can read the
 ### Antigravity CLI
 
 ```sh
-agy plugin install https://github.com/google/elephant-goldfish-model
+agy plugin install https://github.com/gsVAM/elephant-goldfish-model
 ```
 
 For the **Antigravity App** and **Antigravity for IDEs** (Visual Studio Code extension), run `/plugin` or see the [installation instructions](docs/harnesses.md#antigravity-app-and-antigravity-for-ides).
@@ -34,15 +75,15 @@ For the **Antigravity App** and **Antigravity for IDEs** (Visual Studio Code ext
 ### Claude Code
 
 ```sh
-claude plugin marketplace add google/elephant-goldfish-model
-claude plugin install egm@egm
+claude plugin marketplace add gsVAM/elephant-goldfish-model
+claude plugin install egm@egm-astra
 ```
 
 ### Codex
 
 ```sh
-codex plugin marketplace add google/elephant-goldfish-model
-codex plugin add egm@egm
+codex plugin marketplace add gsVAM/elephant-goldfish-model
+codex plugin add egm@egm-astra
 ```
 
 Start a new session after installation. For **Claude Cowork** and **ChatGPT Work**, see the [setup guide](docs/harnesses.md).

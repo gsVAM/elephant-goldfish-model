@@ -9,6 +9,8 @@ description: >-
   negotiation/re-sync checkpoints.
 ---
 
+<!-- Modified by the elephant-goldfish-model Astra fork (gsVAM), 2026: run card on the report, persisted dispositions per round. -->
+
 # Goldfish Review: Resolve
 
 When running in Codex or ChatGPT Work, first read [Codex integration](../../docs/codex.md).
@@ -35,6 +37,9 @@ The caller or orchestration driver provides exactly these parameters:
 *   **`LineRange`**: Exact line numbers (or `full file`).
 *   **`FindingsList`**: Aggregated flat list of findings from Goldfish
     reviewers.
+*   **`Round`** (optional, fork): the review-loop round number; `1` when
+    omitted.
+*   **`RunCard`** (optional, fork): text to put at the top of the report.
 
 ## Execution Workflow
 
@@ -89,6 +94,8 @@ using your file-writing tool. Use this layout:
 
 ```markdown
 # Goldfish Annotated Review Report
+
+[RunCard and the reviewer status lines, when the caller passed them]
 
 **Target:** `[TargetFile]` (`[LineRange]`)
 
@@ -182,6 +189,26 @@ Interpret the user's action/response as follows:
 1.  **Re-verify Lines**: If changes were made to `TargetFile`, verify that the
     file remains structurally coherent and valid markdown.
 2.  Mark the report as resolved (add a `Status: resolved` line at the top).
-3.  **Handoff**: Exit cleanly back to the caller (such as `egm-review-loop`)
+3.  **Persist dispositions (fork)**: Write
+    `goldfish_dispositions_round_[Round].md` next to the report, one row per
+    finding, from the user's final decision at the gate, never from the AI
+    suggestion. Final categories: `fixed` (an edit was applied, including an
+    overruled contest or an escalation the user resolved by adding the fact),
+    `contested` (the user agreed with the contest, or auto accept bypassed
+    it), `declined` (a Nit, or a proposed fix the user skipped or did not
+    apply), `escalated` (given to the user and left unchanged).
+
+    ```markdown
+    # Goldfish dispositions, round [Round]
+
+    **Target:** `[TargetFile]` (`[LineRange]`)
+
+    | Id | Reviewer | Final | Reason | Changed lines |
+    | --- | --- | --- | --- | --- |
+    | [finding id] | [ReviewerPersona] | [fixed \| contested \| declined \| escalated] | [one line] | [Start-End, or -] |
+    ```
+
+4.  **Handoff**: Exit cleanly back to the caller (such as `egm-review-loop`)
     with the count of accepted fixes, contested items, escalated items,
-    declined items, and remaining unaddressed issues.
+    declined items, and remaining unaddressed issues, and the dispositions
+    file path.

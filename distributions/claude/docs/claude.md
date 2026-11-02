@@ -2,6 +2,7 @@
 Copyright 2026 Google LLC.
 SPDX-License-Identifier: Apache-2.0
 -->
+<!-- Modified by the elephant-goldfish-model Astra fork (gsVAM), 2026: fork install commands, Astra lane section, panel stage order. -->
 
 # Claude Code integration
 
@@ -11,11 +12,13 @@ must not be treated as verified Goldfish isolation environments.
 ## Invocation and resources
 
 ```sh
-claude plugin marketplace add google/elephant-goldfish-model
-claude plugin install egm@egm
+claude plugin marketplace add gsVAM/elephant-goldfish-model
+claude plugin install egm@egm-astra
 ```
 
-Enable the installed plugin with `claude plugin enable egm@egm`.
+Enable the installed plugin with `claude plugin enable egm@egm-astra`. (The
+fork's marketplace is `egm-astra`; upstream's is `egm@egm`. The plugin name and
+the `/egm:` commands are the same.)
 Start messages with `/egm:egm-brainstorm`, `/egm:egm-draft`, or `/egm:egm-review`.
 Skills retain `disable-model-invocation: true`: their absence from automatic
 skill discovery is expected. The `Skill` tool refuses these skills, so to run
@@ -41,7 +44,44 @@ child. In both cases the main context collects findings and writes the report.
 Keep review stages 5, 6, 7, 8, and 9 sequential. Parallelize only reviewers
 within the current stage. Wait for every reviewer in that stage, write its
 report, and complete required remediation before dispatching the next stage.
-Uninterrupted mode skips human checkpoints, not these stage dependencies.
+Uninterrupted mode skips human checkpoints, not these stage dependencies. A
+panel that skips Stages 5, 6 and 8 (`resources/review_panels.md`) keeps the
+remaining stages in this order.
+
+## Astra lane (fork addition)
+
+The fork adds an optional second-model reviewer, GPT-6 Astra, at Stages 7 and
+9, run by the main conversation through the claudex-loop runner as one
+background Bash command per round. The procedure is `resources/astra_lane.md`;
+the panels, run card and `EGM_*` variables are `resources/review_panels.md`.
+
+- **Stage-order exception**: the Astra lane is the one reviewer that may span
+  stages. In the consolidated preset one full-file run covers Steps 5 to 9,
+  and no `TargetFile` edit happens before `consolidated_review_report.md` is
+  written, because the runner fails a run whose plan changed.
+- **Prerequisites** (missing ones make the lane `not run`; the review then runs
+  Claude-only): the claudex-loop plugin (2.1.0 or later) installed in this
+  Claude Code configuration folder, so that
+  `<plugins root>/cache/claudex-loop/claudex-loop/<version>/skills/claudex-loop/scripts/runner.py`
+  exists; Codex CLI 0.153.4 or later on `PATH`; `codex login` completed;
+  Python 3.10 or later as `python3`. The plugins root is
+  `$CLAUDE_CODE_PLUGIN_CACHE_DIR`, else `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins`.
+- **Sandbox**: when `sandbox.enabled` is on, Codex needs network access to
+  OpenAI and writes to `~/.codex`. Add the runner command to
+  `sandbox.excludedCommands`, or the OpenAI domains to
+  `sandbox.network.allowedDomains` and `~/.codex` to
+  `sandbox.filesystem.allowWrite`; otherwise the lane records `not run (sandbox)`.
+- **Configuration**: `EGM_ASTRA` (default `on` when the prerequisites are
+  met), `EGM_PANEL`, `EGM_ASTRA_MODEL`, `EGM_ASTRA_EFFORT`, `EGM_ASTRA_MEMORY`,
+  `EGM_GOLDFISH_MODEL`, `EGM_GOLDFISH_EFFORT`, set in the `env` block of any
+  settings file and validated against allowlists. Project settings outrank
+  user settings, so a user-level `EGM_ASTRA=off` is not a hard opt-out for a
+  trusted repository. The hard opt-outs are `codex logout`, `EGM_ASTRA=off` in
+  managed settings, and not installing claudex-loop.
+- **Permissions**: each launch is one Bash approval. Do not add a prefix allow
+  rule for the runner; a prefix rule also approves chained commands. Headless
+  runs without an approval record the lane as `not run (denied)`.
+- Other hosts (Codex, Cowork, Antigravity) never run the lane.
 
 Claude substitutes `${CLAUDE_PLUGIN_ROOT}` in plugin skill and agent bodies. Use that
 resolved absolute root for `agents/`, `resources/`, and `docs/`; use the invoked
@@ -157,7 +197,7 @@ to avoid confusion with an already installed `egm` plugin. Validate it with
 ## Claude Cowork
 
 Claude Cowork uses the same `.claude-plugin` package as Claude Code.
-Install the plugin from claude.ai/plugins or the Cowork plugin panel via marketplace `google/elephant-goldfish-model`.
+Install the plugin from claude.ai/plugins or the Cowork plugin panel via marketplace `gsVAM/elephant-goldfish-model`.
 For a candidate package, Customize > Plugins > Add plugin > Upload plugin
 accepts a ZIP containing the Claude manifest, adapters, and shared runtime files.
 Install it and choose **Try in chat**. Record whether the resulting task runs

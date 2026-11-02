@@ -2,6 +2,7 @@
 Copyright 2026 Google LLC.
 SPDX-License-Identifier: Apache-2.0
 -->
+<!-- Modified by the elephant-goldfish-model Astra fork (gsVAM), 2026: install commands point at the fork's egm-astra marketplace. -->
 
 # Codex integration
 
@@ -10,8 +11,8 @@ SPDX-License-Identifier: Apache-2.0
 Install the whole plugin, including its personas and standards:
 
 ```sh
-codex plugin marketplace add google/elephant-goldfish-model
-codex plugin add egm@egm
+codex plugin marketplace add gsVAM/elephant-goldfish-model
+codex plugin add egm@egm-astra
 ```
 
 Start a fresh session after installation. Select the installed `egm` skill
@@ -107,7 +108,7 @@ Keep `.claude-plugin/` outside the OpenAI archive: its agent adapters belong
 to the Claude Code integration. Public directory plugins cannot include hooks.
 
 Enterprise, Business, and Edu workspaces can import the plugin via Admin > Plugins > Add > Import marketplace.
-Set the repository URL to `https://github.com/google/elephant-goldfish-model` and marketplace path to `.agents/plugins`.
+Set the repository URL to `https://github.com/gsVAM/elephant-goldfish-model` and marketplace path to `.agents/plugins`.
 Skills are accessible via `@egm` for direct interaction.
 Check the native tools in the current chat before starting a Goldfish review.
 Some ChatGPT Work sessions expose native `spawn_agent` with `fork_turns: "none"`.

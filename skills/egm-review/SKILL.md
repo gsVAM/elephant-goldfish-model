@@ -9,6 +9,8 @@ description: >-
   Zoom Out Review, and Implementation Readiness.
 ---
 
+<!-- Modified by the elephant-goldfish-model Astra fork (gsVAM), 2026: run card, panel presets, Astra lane. -->
+
 # Review, Validation & Automated Remediation
 
 When running in Codex or ChatGPT Work, first read [Codex integration](../../docs/codex.md).
@@ -102,6 +104,11 @@ If your harness has no subagent tool, stop and tell the user: a review in the sa
 
 ### Step 2: Curated Pipeline Preset Selection
 
+0.  **Run card & panel (fork)**: Read `resources/review_panels.md`. Read the
+    configuration, run the Astra preflight it names, show the run card, then
+    ask the review mode and the panel together as that file says. That prompt
+    is the one exception to the single-question rule (constraint 11 and the
+    invariants below).
 1.  **Preset Gate Check**:
     *   If `Step` parameter was explicitly provided during invocation (e.g.
         `interactive`, `uninterrupted`, `feature_spec`, `implementation`, or an
@@ -203,6 +210,10 @@ Once the semantic split and execution preset are confirmed:
         then cleanly halt.
     *   **Implementation plan only**: Jump directly to Stage 9 (Implementation
         Readiness Test).
+    *   **Panel (fork)**: When the panel is not Full, follow the routing table
+        in `resources/review_panels.md` instead of the sequences above. In
+        Stages 7 and 9 pass `egm-review-loop` the panel's reviewers plus
+        `AstraLane`, `Stage`, `RunCard`, `GoldfishModel` and `GoldfishEffort`.
 
 --------------------------------------------------------------------------------
 
@@ -264,6 +275,8 @@ plain chat):
     sequence without interactive checkpoint pauses between steps. For each
     stage, write the individual report file to the working directory (or your
     harness's artifact directory, if it has one):
+    *   **Astra lane (fork)**: Start one full-file run before the first step
+        that runs, as `resources/astra_lane.md` says; wait for it in item 2.
     *   **Step 5 (Initial Zoom Out)**: Spawn `egm-synthesizer` (or direct
         subagent) with `Reviewers: [egm-zoom-out]` on `full file` → write
         `zoom_out_report.md`.
@@ -282,7 +295,9 @@ plain chat):
         egm-codebase-details, egm-style]` on `DetailedRange` → write
         `implementation_readiness_report.md`.
 2.  **Cross-Stage Synthesis & Deduplication**:
-    *   Collect all findings across the 5 stage reports.
+    *   Collect all findings across the stage reports that ran, plus the Astra
+        result or its `not run` reason (fork); name the stages the panel
+        skipped and put the run card at the top of the report.
     *   Consolidate observations into actionable tasks by priority (🔴 Blocker, 🟡
         Major, 🟢 Nit).
     *   Build a Traceability Matrix mapping raw findings to consolidated action
