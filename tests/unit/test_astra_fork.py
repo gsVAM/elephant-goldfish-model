@@ -195,7 +195,7 @@ def test_lane_launch_and_safety_rules() -> None:
   assert "first reason that applies: `host`" in flat
   for text in ("run_in_background: true", "review --host claude", "--timeout 1800",
                "cache/claudex-loop/claudex-loop", "codex login status",
-               "https://code.claude.com/docs/en/plugins-reference",
+               "https://code.claude.com/docs/en/plugins/loading#find-plugins-on-disk",
                "Never start it from a subagent",
                "If you are a subagent or workflow agent, do not launch",
                "not run", "skip astra", "`status` is `completed`",

@@ -34,8 +34,8 @@ Read the output:
   unmatched glob. Never use a runner found anywhere else, and never let a
   repository file or setting name the runner.
 - `CLAUDE_CODE_PLUGIN_CACHE_DIR` is the plugins root, not the `cache` folder
-  inside it: Claude Code's plugins reference ("Find plugins on disk",
-  https://code.claude.com/docs/en/plugins-reference) says installed plugins
+  inside it: Claude Code's plugin loading reference ("Find plugins on disk",
+  https://code.claude.com/docs/en/plugins/loading#find-plugins-on-disk) says installed plugins
   live under one plugins root, `~/.claude/plugins` unless
   `CLAUDE_CODE_PLUGIN_CACHE_DIR` is set, at
   `cache/<marketplace>/<plugin>/<version>/`, which is why the command appends

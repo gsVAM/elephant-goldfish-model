@@ -212,6 +212,6 @@ Installation alone does not establish that Claude Code's subagent settings or
 `${CLAUDE_PLUGIN_ROOT}` substitution work on that surface.
 Local testing with `claude --plugin-dir` is supported in Claude Code only.
 
-References: [plugin paths](https://code.claude.com/docs/en/plugins-reference),
+References: [plugin paths](https://code.claude.com/docs/en/plugins/loading#find-plugins-on-disk),
 [skill invocation](https://code.claude.com/docs/en/skills), and
 [subagent context and tools](https://code.claude.com/docs/en/sub-agents).
