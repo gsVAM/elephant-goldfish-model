@@ -241,8 +241,15 @@ class FakeGitHub:
     endpoint = self.endpoint_of(args)
     paginate = "--paginate" in args
     if endpoint == "graphql":
-      query = args[args.index("-f") + 1]
+      query = next(a for a in args if a.startswith("query="))
       assert "includeClosedPrs: true" in query and "$endCursor" in query, query
+      # R9-03: String! variables must travel with -f; -F would coerce `2048`
+      # or `true` to a non-string and GraphQL would reject them.
+      for key in ("owner=", "name="):
+        i = next(i for i, a in enumerate(args) if a.startswith(key))
+        assert args[i - 1] == "-f", (key, args)
+      i = next(i for i, a in enumerate(args) if a.startswith("number="))
+      assert args[i - 1] == "-F", args
       assert paginate and "--slurp" in args
       number = int(args[args.index("number=" + args[args.index("-F", args.index("-F") + 1) + 1][7:]) + 1][7:]) \
           if False else int([a for a in args if a.startswith("number=")][0][7:])
@@ -1670,3 +1677,33 @@ def test_a_retargeted_pr_is_a_new_review_target(world):
   assert code == 0 and "changed: U01" in out, out
   unit = state_of(world)["status"]["units"]["U01"]
   assert unit["base_ref"] == "release-1" and unit["base_sha"] == "f" * 40
+
+
+def test_pr_discovery_matches_a_differently_cased_repository(world):
+  """R9-04: GitHub may echo `Example-Org/WebHooks` for a config that says
+  `example-org/webhooks`; the PR must still be found."""
+  gh = applied(world)
+  make_pr(gh, 70, "a" * 40, closes=[(REPO, 2)])
+  gh.graphql[2] = [{**gh.prs[70], "repository": {"nameWithOwner": REPO.upper()}}]
+  code, out = world.run("status", "--plan", world.plan)
+  assert code == 0 and "U01 #2: pr #70" in out, out
+
+
+def test_collect_not_run_refuses_while_a_launched_runner_is_alive(world, tmp_path):
+  """R9-02: skipping a result is not the process ending; cleanup must not be
+  able to remove a worktree the runner still reads."""
+  applied(world)
+  folder = tmp_path / "run"; folder.mkdir()
+  assert world.run("record-launch", "--plan", world.plan, "--unit", "U01",
+                   "--round", 1, "--run-folder", str(folder))[0] == 0
+  code, out = world.run("collect", "--plan", world.plan, "--unit", "U01", "--round", 1,
+                        "--not-run", "skipped by the user")
+  assert code == 1 and "has not terminated" in out, out
+  (folder / "result.json").write_text(json.dumps({"status": "running"}), encoding="utf-8")
+  code, out = world.run("collect", "--plan", world.plan, "--unit", "U01", "--round", 1,
+                        "--not-run", "skipped by the user")
+  assert code == 1 and "reports running" in out, out
+  (folder / "result.json").write_text(json.dumps({"status": "failed"}), encoding="utf-8")
+  code, out = world.run("collect", "--plan", world.plan, "--unit", "U01", "--round", 1,
+                        "--not-run", "skipped by the user")
+  assert code == 0 and "not run (skipped by the user)" in out, out

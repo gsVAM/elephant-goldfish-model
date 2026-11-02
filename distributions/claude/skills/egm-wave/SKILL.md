@@ -224,13 +224,18 @@ helper commands at once.
     first (`GH_HOST=github.com gh api repos/O/R/pulls/<n>/reviews --paginate
     --slurp`) so a
     comment with the same header is not posted twice. Ask one question
-    (post, edit, skip). **Immediately before posting, re-read the head**:
-    `GH_HOST=github.com gh pr view <n> -R O/R --json headRefOid`. If it is not
-    the head the round reviewed (the `head <sha7>` in the report header), do
-    not post: the builder pushed during the review or the confirmation pause,
-    and findings, CI and DoD evidence from the old head would land on the new
-    one. Say so in one line, record the round as `head-moved`, and start the
-    next round against the new head. Only when the head is unchanged, post
+    (post, edit, skip). **Immediately before posting, re-read the review
+    target**: `GH_HOST=github.com gh pr view <n> -R O/R --json
+    headRefOid,baseRefName,baseRefOid`. The target is the triple the round's
+    record in `foreman_<id>_state.json` holds (`head`, `base_ref`,
+    `base_sha`); a retarget from `main` to a release branch keeps the head
+    and changes the diff, so the head alone is not the identity. If ANY of
+    the three differs from the reviewed triple, do not post: findings, CI
+    and DoD evidence from the old target would land on a different change.
+    Say so in one line, record the round as `target-moved` with the new
+    triple, and start the next round against the current target - a new
+    round on an unchanged head is permitted and expected in that case. Only
+    when the whole triple is unchanged, post
     through the API with the review bound to the reviewed commit:
     `GH_HOST=github.com gh api repos/O/R/pulls/<n>/reviews -f
     commit_id='<full reviewed sha>' -f event=COMMENT -F body=@'<path>'`, one

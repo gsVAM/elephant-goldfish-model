@@ -1682,13 +1682,20 @@ GRAPHQL_QUERY = (
 def discover_pr(handoff: Handoff, uid, number):
   repo = handoff.config["repo"]
   owner, name = repo.split("/")
-  pages = gh_json(["api", "graphql", "--paginate", "--slurp", "-F", f"owner={owner}",
-                   "-F", f"name={name}", "-F", f"number={number}", "-f", f"query={GRAPHQL_QUERY}"]) or []
+  # `-f` keeps owner and name as strings: with `-F`, gh would turn a repository
+  # named `2048`, `true` or `null` into a number/boolean and GraphQL rejects
+  # the String! variable. Only the issue number is an Int.
+  pages = gh_json(["api", "graphql", "--paginate", "--slurp", "-f", f"owner={owner}",
+                   "-f", f"name={name}", "-F", f"number={number}", "-f", f"query={GRAPHQL_QUERY}"]) or []
   nodes = []
   for page in pages:
     issue = ((page.get("data") or {}).get("repository") or {}).get("issue") or {}
     nodes += (issue.get("closedByPullRequestsReferences") or {}).get("nodes") or []
-  matches = [pr_record(n) for n in nodes if (n.get("repository") or {}).get("nameWithOwner") == repo]
+  # GitHub treats owner and name case-insensitively and may echo `Acme/WebHooks`
+  # for a config that says `acme/webhooks`; the confirmed destination text is
+  # kept as written, only the comparison folds case.
+  matches = [pr_record(n) for n in nodes
+             if ((n.get("repository") or {}).get("nameWithOwner") or "").lower() == repo.lower()]
   if matches:
     return matches, []
   prs = gh_json(["pr", "list", "-R", repo, "--state", "all", "--limit", "1000", "--json",
@@ -1700,7 +1707,7 @@ def discover_pr(handoff: Handoff, uid, number):
     for ref in refs:
       repository = ref.get("repository") or {}
       full = f"{(repository.get('owner') or {}).get('login')}/{repository.get('name')}"
-      if full == repo and ref.get("number") == number:
+      if full.lower() == repo.lower() and ref.get("number") == number:
         matches.append(pr_record(pr))
         break
     else:
@@ -2196,6 +2203,19 @@ def cmd_collect(args):
         + ("" if args.not_run else ". If the lane never ran (it was unavailable, "
            "denied, or the launch failed), collect it with --not-run <reason>."))
   folder = record.get("run_folder")
+  if folder and args.not_run:
+    # A launched runner that the user chose to skip keeps running and keeps
+    # reading its worktree. Recording the round as not run is fine; letting
+    # cleanup remove that worktree while the process is alive is not. Require
+    # a terminal result before a launched round can be collected at all.
+    result = Path(folder) / "result.json"
+    status = (json.loads(read_text(result)) or {}).get("status") if result.is_file() else None
+    if status in (None, "running"):
+      raise HandoffError(
+          f"{args.unit} round {args.round} was launched and its runner has not "
+          f"terminated ({result} {'reports running' if status else 'does not exist'}). "
+          f"Skipping its result is fine, but the worktree must survive until the "
+          f"process ends: wait for the completion notice, then collect --not-run.")
   if folder and not args.not_run:
     result = Path(folder) / "result.json"
     if not result.is_file():
