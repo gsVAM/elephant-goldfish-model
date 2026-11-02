@@ -638,6 +638,7 @@ class Handoff:
     self.graph = Graph(self.plan)
     slug = re.sub(r"[^a-z0-9]+", "-", design.stem.lower()).strip("-")[:20].rstrip("-")
     self.handoff_id = f"{slug}-{self.design_sha[:6]}"
+    require_binding(self.artifact_dir, self.handoff_id, self.config["repo"])
     self.state = state if state is not None else load_state(self.artifact_dir)
     if self.state.get("approval") and self.state["approval"].get("design_sha256") != self.design_sha:
       raise HandoffError("design changed since the handoff started: re-run the gate")
@@ -841,13 +842,8 @@ class Handoff:
     write_text(self.artifact_dir / "handoff_bodies.md", self.bodies_text())
     previous = self.state.get("handoff_id")
     if previous and previous != self.handoff_id:
-      created = [u for u, d in (self.state.get("units") or {}).items() if d.get("number")]
-      if created or (self.state.get("tracking") or {}).get("number"):
-        raise HandoffError(
-            f"{self.artifact_dir} already holds handoff {previous} with issues on "
-            f"GitHub ({', '.join(created) or 'tracking'}); this design is handoff "
-            f"{self.handoff_id}. Creation, decision and verification records are "
-            f"not transferable: start the new handoff in a new artifact directory.")
+      # Nothing was created (require_binding would have refused otherwise), so
+      # the records of the superseded handoff are stale, not valuable.
       for key in ("confirmed", "confirmed_sha256", "confirmed_at", "labels",
                   "dry_run", "verify", "gate", "readiness", "units", "tracking",
                   "decisions"):
@@ -919,6 +915,39 @@ def normalise(body: str) -> str:
 FENCE_RE = re.compile(r"^(?P<indent> {0,3})(?P<fence>`{3,}|~{3,})(?P<info>.*)$")
 
 
+def strip_spans(line: str) -> str:
+  """Remove GFM code spans, leaving everything GitHub renders as text.
+
+  A span closes only on a backtick run of exactly the opening length, so an
+  opener of one backtick is not closed by a run of two. Anything that never
+  closes is not a span and must stay visible to the scanner."""
+  out, i, n = [], 0, len(line)
+  while i < n:
+    if line[i] != "`":
+      out.append(line[i])
+      i += 1
+      continue
+    start = i
+    while i < n and line[i] == "`":
+      i += 1
+    length = i - start
+    j = i
+    while j < n:
+      if line[j] != "`":
+        j += 1
+        continue
+      run = j
+      while j < n and line[j] == "`":
+        j += 1
+      if j - run == length:
+        i = j
+        break
+    else:
+      out.append(line[start:])
+      return "".join(out)
+  return "".join(out)
+
+
 def strip_code(text: str):
   """Yield (line number, text outside code spans and fenced blocks).
 
@@ -934,7 +963,7 @@ def strip_code(text: str):
         opener = (match.group("fence")[0], len(match.group("fence")))
         yield number, ""
         continue
-      yield number, re.sub(r"(?P<t>`+)(?:[^`]|(?!(?P=t))`)*(?P=t)", "", line)
+      yield number, strip_spans(line)
       continue
     char, length = opener
     if (match and match.group("fence")[0] == char
@@ -1033,10 +1062,23 @@ def cmd_approve(args):
   question = (f"Approve `{design}` (sha256 `{sha[:12]}`, commit `{commit}`) for handoff? "
               f"Evidence: {f'`{evidence}` (modified {stamp})' if evidence else 'none given'}.")
   if not args.yes:
+    state = load_state(artifacts)
+    state["pending_approval"] = {"design": str(design), "design_sha256": sha,
+                                 "commit": commit, "asked_at": now_iso()}
+    save_state(artifacts, state)
     print(question)
     print("Options: Approve | Stop. Run again with --yes after the user chose Approve.")
     return 0
   state = load_state(artifacts)
+  slug = re.sub(r"[^a-z0-9]+", "-", design.stem.lower()).strip("-")[:20].rstrip("-")
+  require_binding(artifacts, f"{slug}-{sha[:6]}")
+  pending = state.get("pending_approval") or {}
+  if pending.get("design_sha256") and pending["design_sha256"] != sha:
+    raise HandoffError(
+        f"the design changed since the question was asked (approved "
+        f"{pending['design_sha256'][:12]}, now {sha[:12]}): ask again before "
+        f"recording an approval")
+  state.pop("pending_approval", None)
   state["approval"] = {"design": str(design), "design_sha256": sha, "commit": commit,
                        "evidence": str(evidence) if evidence else None,
                        "answer": "Approve", "approved_at": now_iso()}
@@ -1322,7 +1364,7 @@ def apply_writes(handoff: Handoff, writes, budget: Budget, save):
       continue
     kind, title, label_set, body = item[1], item[2], item[3], item[4]
     target = tracking if kind == "tracking" else units.setdefault(kind, {})
-    if kind != "tracking":
+    if kind != "tracking" and not target.get("deferred"):
       target["wave"] = handoff.graph.wave[kind]
     if target.get("done"):
       continue
@@ -1524,6 +1566,39 @@ def require_repo(handoff) -> str:
   return repo
 
 
+def created_anything(state) -> bool:
+  if (state.get("tracking") or {}).get("number"):
+    return True
+  return any(d.get("number") for d in (state.get("units") or {}).values())
+
+
+def require_binding(artifact_dir: Path, handoff_id=None, repo=None) -> None:
+  """Once this artifact directory has created anything on GitHub, its handoff
+  id, repository and host are frozen.
+
+  Issue numbers, database ids and `done` flags belong to one repository and one
+  design. Re-pointing `repo` (or approving a different design) while those
+  records are present would let a later apply skip the first repository's
+  issues and attach new ones to an unrelated issue of the same number."""
+  state = load_state(artifact_dir)
+  if not created_anything(state):
+    return
+  bound_id = state.get("handoff_id")
+  bound_repo = (state.get("confirmed") or {}).get("repo") or state.get("repo")
+  if handoff_id and bound_id and handoff_id != bound_id:
+    raise HandoffError(
+        f"{artifact_dir} already holds handoff {bound_id} with issues on "
+        f"{bound_repo}; this design is handoff {handoff_id}. Creation, decision "
+        f"and verification records are not transferable: use a new artifact "
+        f"directory for the new design. Nothing was changed.")
+  if repo and bound_repo and repo != bound_repo:
+    raise HandoffError(
+        f"{artifact_dir} already created issues on {bound_repo}; the "
+        f"configuration now names {repo}. The creation destination is frozen "
+        f"once anything exists: restore `repo` in .egm/handoff.json, or use a "
+        f"new artifact directory. Nothing was changed.")
+
+
 def require_confirmed_plan(handoff) -> None:
   """Refuse to read readiness off a plan edited since the confirmation.
 
@@ -1638,8 +1713,9 @@ def unit_view(handoff: Handoff, uid):
           "state_reason": issue.get("state_reason"), "launched": record.get("launched"),
           "pr": None, "head": None, "ci": None, "status": "waiting-for-pr", "landed": False,
           "candidates": []}
-  if record.get("pr"):
-    pr = read_pr(repo, record["pr"]["number"])
+  chosen = (record.get("watch") or {}).get("number") or (record.get("pr") or {}).get("number")
+  if chosen:
+    pr = read_pr(repo, chosen)
   else:
     matches, candidates = discover_pr(handoff, uid, number)
     pr = None
@@ -1655,6 +1731,7 @@ def unit_view(handoff: Handoff, uid):
       pr["head_seen_at"] = record["pr"].get("head_seen_at", NOW())
     record["pr"] = pr
     view["pr"], view["head"] = pr["number"], pr["head"]
+    view["pr_state"] = "MERGED" if pr.get("merged_at") else (pr.get("state") or "OPEN").upper()
     if pr["merged_at"]:
       view["status"] = "merged"
     else:
@@ -1666,7 +1743,23 @@ def unit_view(handoff: Handoff, uid):
         verdict = "no-ci"
       view["status"] = verdict
   closed_done = issue.get("state") == "closed" and issue.get("state_reason") == "completed"
-  if record.get("landed_confirmed") or (closed_done and pr and pr.get("merged_at")):
+  if pr and not pr.get("merged_at") and (pr.get("state") or "").upper() == "CLOSED":
+    # Terminal: the builder abandoned this PR. Never rediscover silently; the
+    # user picks the replacement with --watch.
+    view["status"] = f"pr #{pr['number']} closed unmerged (choose a replacement with --watch)"
+  override = record.get("landed_confirmed")
+  if override and not closed_done:
+    # The exception is for an issue closed as completed with no watched PR; it
+    # lapses the moment either of those stops being true.
+    view["status"] = (f"landed confirmation no longer applies (issue is "
+                      f"{issue.get('state')}/{issue.get('state_reason')}): "
+                      f"re-confirm or watch a PR")
+    override = None
+  if override and pr:
+    view["status"] = (f"landed confirmation no longer applies (pr #{pr['number']} "
+                      f"is now visible): re-confirm or let it merge")
+    override = None
+  if override or (closed_done and pr and pr.get("merged_at")):
     view["landed"], view["status"] = True, "landed"
   elif closed_done and not pr:
     view["status"] = "closed (no watched PR)"
@@ -1675,6 +1768,12 @@ def unit_view(handoff: Handoff, uid):
   record["status"] = view["status"]
   state["units"][uid] = record
   return view
+
+
+def issue_closed_completed(handoff: Handoff, uid) -> bool:
+  record = handoff.state.get("units", {}).get(uid, {})
+  issue = gh_json(["api", f"repos/{handoff.config['repo']}/issues/{record.get('number')}"]) or {}
+  return issue.get("state") == "closed" and issue.get("state_reason") == "completed"
 
 
 def status_pass(handoff: Handoff):
@@ -1686,7 +1785,10 @@ def status_pass(handoff: Handoff):
   open_blocking = {}
   for unit in handoff.plan.units.values():
     for d in unit.decisions:
-      if d["blocking"] and f"{unit.id}/{d['id']}" not in decisions:
+      answer = decisions.get(f"{unit.id}/{d['id']}")
+      # An answer the builder cannot see is not an answer: the comment may have
+      # failed the scan, failed to post, or the session may have ended first.
+      if d["blocking"] and not (answer and answer.get("published")):
         open_blocking.setdefault(unit.id, []).append(d)
   ready = [u for u in handoff.graph.order if u not in landed and not views[u]["launched"]
            and handoff.graph.preds[u] <= landed and u not in open_blocking]
@@ -1695,7 +1797,9 @@ def status_pass(handoff: Handoff):
                     and u not in landed]
   summary = {"landed": sorted(landed), "ready": ready, "in_flight": in_flight,
              "unlaunched_with_pr": unlaunched_prs, "open_blocking": {u: [d["id"] for d in ds] for u, ds in open_blocking.items()},
-             "units": {u: {"pr": v["pr"], "head": v["head"], "status": v["status"], "landed": v["landed"],
+             "units": {u: {"pr": v["pr"], "head": v["head"], "status": v["status"],
+                           "landed": v["landed"], "issue_state": v.get("issue_state"),
+                           "pr_state": v.get("pr_state"),
                            "candidates": v["candidates"]} for u, v in views.items()},
              "at": now_iso()}
   # A watcher sleeping between polls must not write back a stale copy of the
@@ -1704,11 +1808,22 @@ def status_pass(handoff: Handoff):
   fresh = load_state(handoff.artifact_dir)
   if fresh:
     fresh["status"] = summary
+    # The watched PR is the user's choice, not an observation: only the
+    # invocation that was given --watch may write it, and only while nobody
+    # else has chosen a different one since. Everything else here is polled.
     for uid, record in (state.get("units") or {}).items():
-      if record.get("pr"):
-        fresh.setdefault("units", {}).setdefault(uid, {})["pr"] = record["pr"]
-      if record.get("landed_confirmed"):
-        fresh.setdefault("units", {}).setdefault(uid, {})["landed_confirmed"] = record["landed_confirmed"]
+      target = fresh.setdefault("units", {}).setdefault(uid, {})
+      selected = (target.get("watch") or {}).get("number")
+      observed = (record.get("pr") or {}).get("number")
+      # A poll writes back what it observed, but never resurrects an
+      # observation of a PR the user has since stopped watching.
+      if record.get("pr") and (selected is None or selected == observed):
+        target["pr"] = record["pr"]
+      if record.get("status"):
+        target["status"] = record["status"]
+      for key in ("watch", "landed_confirmed"):
+        if uid in getattr(handoff, "watch_owned", set()) and record.get(key):
+          target[key] = record[key]
     save_state(handoff.artifact_dir, fresh)
     handoff.state = state = fresh
   else:
@@ -1731,7 +1846,10 @@ def print_status(handoff: Handoff, summary, open_blocking):
     print(f"{uid} #{record.get('number')}{launched}: {pr}; {v['status']}")
   for uid, ds in open_blocking.items():
     for d in ds:
-      print(f"open blocking decision {uid}/{d['id']}: {d['question']} (owner: {d['owner']}; default: {d['default']})")
+      answered = (handoff.state.get("decisions") or {}).get(f"{uid}/{d['id']}")
+      note = " [answered, NOT PUBLISHED]" if answered else ""
+      print(f"open blocking decision {uid}/{d['id']}{note}: {d['question']} "
+            f"(owner: {d['owner']}; default: {d['default']})")
   if summary["unlaunched_with_pr"]:
     print("open PRs for units not launched: " + ", ".join(f"{u} #{summary['units'][u]['pr']}" for u in summary["unlaunched_with_pr"]))
 
@@ -1750,10 +1868,23 @@ def cmd_status(args):
       raise HandoffError(f"--watch takes U<nn>=<pr number>, got {item}")
     pr = read_pr(handoff.config["repo"], int(number))
     pr["head_seen_at"] = NOW()
-    state["units"].setdefault(uid, {})["pr"] = pr
+    record = state["units"].setdefault(uid, {})
+    # The selection is the user's and is merged on its own terms; `pr` below is
+    # only the first observation of it.
+    record["watch"] = {"number": int(number), "at": now_iso()}
+    record["pr"] = pr
+    handoff.watch_owned = getattr(handoff, "watch_owned", set()) | {uid}
   for uid in args.confirm_landed or []:
+    view = unit_view(handoff, uid)
+    if view["pr"] or not issue_closed_completed(handoff, uid):
+      raise HandoffError(
+          f"--confirm-landed {uid} is only for an issue closed as completed with "
+          f"no watched PR; {uid} is {view['status']}")
     state["units"].setdefault(uid, {})["landed_confirmed"] = now_iso()
-  fingerprint = lambda s: {u: (v["pr"], v["head"], v["status"], v["landed"]) for u, v in s["units"].items()}
+    handoff.watch_owned = getattr(handoff, "watch_owned", set()) | {uid}
+  fingerprint = lambda s: {u: (v["pr"], v["head"], v["status"], v["landed"],
+                              v.get("issue_state"), v.get("pr_state"))
+                           for u, v in s["units"].items()}
   previous = fingerprint(state["status"]) if state.get("status") else None
   summary, open_blocking = status_pass(handoff)
   if args.wait:
@@ -1817,7 +1948,12 @@ def cmd_defer(args):
   if new not in names or old in names:
     raise HandoffError(f"MISMATCH after the label edit on #{record['number']}: labels {sorted(names)}")
   record["wave"] = args.to_wave
-  record["deferred"] = {"from": old, "to": new, "at": now_iso()}
+  # The initial wave is the one the confirmed write list names and never moves;
+  # `current_wave` is what the authorised label edits have made of it.
+  record.setdefault("initial_wave", handoff.graph.wave[args.unit])
+  record["current_wave"] = args.to_wave
+  record["deferred"] = {"from": handoff.wave_label(record["initial_wave"]),
+                        "to": new, "at": now_iso()}
   record.pop("launched", None)
   save_state(handoff.artifact_dir, state)
   print(f"{args.unit} deferred to wave {args.to_wave} (label {old} -> {new})")
@@ -1834,12 +1970,27 @@ def cmd_decide(args):
   if not decision:
     raise HandoffError(f"{args.unit} has no decision {args.decision}")
   key = f"{args.unit}/{args.decision}"
-  handoff.state.setdefault("decisions", {})[key] = {"answer": args.answer, "decided_at": now_iso()}
+  if args.published:
+    record = handoff.state.setdefault("decisions", {}).get(key)
+    if not record:
+      raise HandoffError(f"{key} has no recorded answer to mark published")
+    record["published"] = {"comment": args.published, "at": now_iso()}
+    save_state(handoff.artifact_dir, handoff.state)
+    print(f"{key} published as {args.published}")
+    return 0
+  if args.answer is None:
+    raise HandoffError("decide needs --answer, or --published <comment url>")
+  handoff.state.setdefault("decisions", {})[key] = {"answer": args.answer,
+                                                    "decided_at": now_iso(),
+                                                    "published": None}
   save_state(handoff.artifact_dir, handoff.state)
   write_text(handoff.unit_file(args.unit), handoff.unit_file_text(args.unit))
   comment = handoff.artifact_dir / f"decision_comment_{args.unit}_{args.decision}.md"
   write_text(comment, f"**Decision {args.decision}** ({decision['question']}): {args.answer}\n")
   print(f"recorded {key}; re-rendered {handoff.unit_file(args.unit).name}; comment in {comment.name}")
+  print(f"NOT YET PUBLISHED: post {comment.name} on the issue, then run "
+        f"`decide --unit {args.unit} --decision {args.decision} --published <comment url>`. "
+        f"{args.unit} stays blocked until then.")
   return 0
 
 
@@ -1856,7 +2007,12 @@ def load_foreman(artifact_dir, uid):
 
 
 def save_foreman(artifact_dir, uid, data):
-  write_text(foreman_state_path(artifact_dir, uid), json.dumps(data, indent=2, sort_keys=True) + "\n")
+  """Atomic, like the handoff state: a partial write here loses the run folder
+  that the next session needs to resume collection."""
+  path = foreman_state_path(artifact_dir, uid)
+  tmp = path.with_name(path.name + f".tmp{os.getpid()}")
+  tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+  os.replace(tmp, path)
 
 
 def worktree_path(handoff_id, uid, pr):
@@ -1906,12 +2062,13 @@ def cmd_record_launch(args):
   rounds = data.setdefault("rounds", {})
   record = rounds.setdefault(str(args.round), {})
   if args.not_run:
+    status = f"not run ({args.not_run})"
     record.update({"phase": "launched", "run_folder": None,
-                   "status": f"not run ({args.not_run})", "at": now_iso()})
+                   "status": status, "run_status": status, "at": now_iso()})
   else:
     folder = Path(args.run_folder).expanduser()
     record.update({"phase": "launched", "run_folder": str(folder),
-                   "status": "running", "at": now_iso()})
+                   "status": "running", "run_status": "running", "at": now_iso()})
   save_foreman(handoff.artifact_dir, args.unit, data)
   print(f"{args.unit} round {args.round}: {record['status']} "
         f"({record['run_folder'] or 'no run folder'})")
@@ -1960,7 +2117,7 @@ def cmd_prepare(args):
     if run_git(["status", "--porcelain"], tree).strip():
       raise HandoffError(f"worktree {tree} has changes: remove it by hand")
     running = [r for r in foreman.get("rounds", {}).values()
-               if r.get("phase") == "launched" and r.get("run_status") == "running"]
+               if r.get("phase") == "launched" and r.get("run_status", r.get("status")) == "running"]
     if running:
       raise HandoffError(f"worktree {tree} belongs to a round still `launched`: mark its run folder "
                          "`not run (killed)` (foreman state) before preparing again")
@@ -2055,9 +2212,10 @@ def build_parser():
   p.add_argument("--yes", action="store_true")
   p.set_defaults(func=cmd_defer)
   p = add("decide", "record the user's answer to a decide-before-build item")
+  p.add_argument("--published", help="mark the recorded answer as posted, with the comment url")
   p.add_argument("--unit", required=True)
   p.add_argument("--decision", required=True)
-  p.add_argument("--answer", required=True)
+  p.add_argument("--answer")
   p.set_defaults(func=cmd_decide)
   p = add("record-launch", "record `launched` and the run folder for a round")
   p.add_argument("--unit", required=True)

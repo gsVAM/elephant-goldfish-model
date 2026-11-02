@@ -102,12 +102,18 @@ single quotes, no chaining. The helper's commands are listed in
         records the answer, re-renders `unit_U03.md` and writes
         `decision_comment_U03_D1.md`. Run `scan --state '<STATE>' --comment
         '<that file>'`, then, with the user's confirmation in the same gate,
-        post it once: `gh issue comment <n> -R O/R --body-file '<path>'` (a
+        post it once: `GH_HOST=github.com gh issue comment <n> -R O/R --body-file
+        '<path>'` (a
         comment with the same first line is not posted twice). An answer
         that changes scope paths or the definition of done is a plan change,
         not a decision: the user edits `handoff_plan.md` and the issue by
-        hand, `graph` re-renders, and one readiness goldfish (as in
-        `egm-handoff` step 4) re-reads that unit before launch.
+        hand, `graph` re-renders, one readiness goldfish (as in `egm-handoff`
+        step 4) re-reads that unit, and the plan is **re-confirmed**: `gate`,
+        `dry-run` and `apply --yes` again (apply makes no write for an issue
+        that already exists, and the new confirmed snapshot is what `verify`,
+        `status` and `launch` then compare against). Without that,
+        `require_confirmed_plan` refuses `status` and `launch`, because the
+        issues on GitHub were created from the snapshot the user confirmed.
     *   **Candidate PR** (a head branch of this handoff with no closing
         reference): watched only after the user confirms it, `status
         --watch U03=412`.
@@ -194,9 +200,10 @@ values filled in. One foreman per in-flight issue, at most 5 at once.
     (severity, path:line, evidence, fix), the definition-of-done checklist
     (met or not, evidence) and the CI summary; no run card, no model names.
     Run `scan --state '<STATE>' --comment '<path>'`. List the PR's reviews
-    first (`gh api repos/O/R/pulls/<n>/reviews --paginate --slurp`) so a
+    first (`GH_HOST=github.com gh api repos/O/R/pulls/<n>/reviews --paginate
+    --slurp`) so a
     comment with the same header is not posted twice. Ask one question
-    (post, edit, skip), then `gh pr review <n> -R O/R --comment --body-file
+    (post, edit, skip), then `GH_HOST=github.com gh pr review <n> -R O/R --comment --body-file
     '<path>'`, one Bash approval. Record the user's dispositions in
     `wave_dispositions_u<id>_r<r>.md` with the five columns of
     `egm-resolve`'s table (from the user's decision, never the AI

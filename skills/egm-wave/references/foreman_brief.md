@@ -81,10 +81,10 @@ run folder resumes at step 2; a round at `fetched` or `prepared`, or
    `fix_request_mention` when the repository has one, then `**EGM review
    round <r> (head <sha7>)**`, the findings table, the definition-of-done
    checklist, the CI summary; no run card, no model names), runs `scan
-   --comment`, lists the PR's reviews (`gh api
+   --comment`, lists the PR's reviews (`GH_HOST=github.com gh api
    repos/O/R/pulls/<n>/reviews --paginate --slurp`) so a comment with the
    same header is not posted twice, asks the user (post, edit, skip), and
-   posts with `gh pr review <n> -R O/R --comment --body-file '<path>'`.
+   posts with `GH_HOST=github.com gh pr review <n> -R O/R --comment --body-file '<path>'`.
    Never `--approve` or `--request-changes`.
 6. The elephant records the user's dispositions in
    `wave_dispositions_u<unit-id>_r<r>.md` (the five columns of

@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import runpy
 import subprocess
+import urllib.parse
 import sys
 import textwrap
 import traceback
@@ -279,7 +280,7 @@ class FakeGitHub:
       return self.ok([list(self.labels.values())])
     if rest == "/issues":
       assert paginate, args
-      label = dict(p.split("=") for p in query.split("&")).get("labels")
+      label = urllib.parse.parse_qs(query).get("labels", [None])[0]
       items = [i for i in self.issues.values() if label in i["labels"]]
       return self.ok([items])
     match = re.fullmatch(r"/issues/(\d+)", rest)
@@ -772,6 +773,10 @@ def test_status_landed_ready_decisions_and_shared_edges(world):
   assert "- Decision: 25" in (world.artifacts / "unit_U03.md").read_text(encoding="utf-8")
   assert (world.artifacts / "decision_comment_U03_D2.md").read_text(encoding="utf-8").startswith("**Decision D2** (Page size")
   code, out = world.run("status", "--plan", world.plan)
+  assert "ready: none" in out and "NOT PUBLISHED" in out
+  assert world.run("decide", "--plan", world.plan, "--unit", "U03", "--decision", "D2",
+                   "--published", "https://github.com/x/y/issues/4#c1")[0] == 0
+  code, out = world.run("status", "--plan", world.plan)
   assert "ready: U03" in out
   assert world.run("graph", "--plan", world.plan)[0] == 0
   assert "- Decision: 25" in (world.artifacts / "unit_U03.md").read_text(encoding="utf-8")
@@ -1064,7 +1069,8 @@ def test_operations_refuse_a_repository_the_numbers_do_not_belong_to(world):
   for argv in (("status", "--plan", world.plan),
                ("defer", "--plan", world.plan, "--unit", "U03", "--to-wave", 2, "--yes")):
     code, out = world.run(*argv)
-    assert code == 1 and "not portable between repositories" in out, argv
+    assert code == 1, argv
+    assert "frozen once anything exists" in out or "not portable between repositories" in out, out
 
 
 def test_verify_refuses_a_plan_edited_since_the_confirmation(world):
@@ -1177,3 +1183,134 @@ def test_record_launch_persists_the_run_folder_before_the_wait(world):
   data = json.loads((world.artifacts / "foreman_U01_state.json").read_text(encoding="utf-8"))
   assert data["rounds"]["3"]["status"] == "not run (denied)"
   assert data["rounds"]["2"]["run_folder"], "an earlier round must survive"
+
+
+def test_a_different_design_may_not_reuse_a_directory_that_created_issues(world):
+  """R2-07: the refusal must come before approve overwrites the approval or
+  graph rewrites the artifacts, so the existing handoff stays intact."""
+  applied(world)
+  before = (world.artifacts / "unit_U01.md").read_text(encoding="utf-8")
+  other = world.repo / "docs/designs/other.md"
+  other.write_text(DESIGN.replace("# Webhook", "# Other"), encoding="utf-8")
+  git(["add", "-A"], world.repo)
+  git(["commit", "-qm", "other"], world.repo)
+  code, out = world.run("approve", "--design", other, "--artifacts", world.artifacts, "--yes")
+  assert code == 1 and "new artifact directory" in out and "Nothing was changed" in out
+  state = state_of(world)
+  assert state["design"]["path"].endswith("sample.md")
+  assert state["units"]["U01"]["number"], "the existing handoff must be untouched"
+  assert (world.artifacts / "unit_U01.md").read_text(encoding="utf-8") == before
+
+
+def test_approval_binds_to_the_design_it_displayed(world):
+  """R2-06: the question shows a hash; --yes must not silently approve another."""
+  design = world.repo / "docs/designs/sample.md"
+  assert world.run("approve", "--design", design, "--artifacts", world.artifacts)[0] == 0
+  design.write_text(DESIGN + "\nlater edit\n", encoding="utf-8")
+  git(["commit", "-qam", "later"], world.repo)
+  code, out = world.run("approve", "--design", design, "--artifacts", world.artifacts, "--yes")
+  assert code == 1 and "changed since the question was asked" in out
+  assert "approval" not in state_of(world)
+
+
+def test_a_landed_confirmation_lapses_when_the_issue_reopens(world):
+  """R2-11: the override is for a completed issue with no watched PR."""
+  gh = applied(world)
+  close_as_completed(gh, 2)
+  assert world.run("status", "--plan", world.plan, "--confirm-landed", "U01")[0] == 0
+  assert "U01" in state_of(world)["status"]["landed"]
+  gh.issues[2]["state"], gh.issues[2]["state_reason"] = "open", None
+  code, out = world.run("status", "--plan", world.plan)
+  assert "landed confirmation no longer applies" in out
+  assert "U01" not in state_of(world)["status"]["landed"]
+
+
+def test_confirm_landed_refuses_when_a_pr_is_watched(world):
+  gh = applied(world)
+  make_pr(gh, 70, "a" * 40, closes=[(REPO, 2)])
+  assert world.run("status", "--plan", world.plan, "--watch", "U01=70")[0] == 0
+  code, out = world.run("status", "--plan", world.plan, "--confirm-landed", "U01")
+  assert code == 1 and "only for an issue closed as completed" in out
+
+
+def test_marker_recovery_finds_issues_created_before_a_crash(world):
+  """R2-13/R13: the recovery listing is the only way home after a crash between
+  the create call and the state write, and its label is URL-encoded."""
+  dry_run(world)
+  gh = world.gh
+  # a crash after creating the tracking issue and U01, before either was saved
+  assert world.run("apply", "--plan", world.plan, "--yes", "--max-writes", 8)[0] == 0
+  state = state_of(world)
+  created = {u: d["number"] for u, d in (state.get("units") or {}).items() if d.get("number")}
+  assert created, "the bounded apply must have created something"
+  # erase every local trace of those writes, as an interrupted save would
+  for unit in (state.get("units") or {}).values():
+    unit.pop("number", None), unit.pop("id", None), unit.pop("done", None)
+  for key in ("number", "id", "done"):
+    (state.get("tracking") or {}).pop(key, None)
+  (world.artifacts / "handoff_state.json").write_text(json.dumps(state), encoding="utf-8")
+  before = len([c for c in gh.calls if c[:2] == ["issue", "create"]])
+  assert world.run("apply", "--plan", world.plan, "--yes")[0] == 0
+  after = state_of(world)
+  for uid, number in created.items():
+    assert after["units"][uid]["number"] == number, "recovery must reuse the issue"
+    assert after["units"][uid]["id"], "recovery must backfill the database id"
+  assert len(gh.issues) == 4, f"no duplicate issues: {sorted(gh.issues)}"
+
+
+def test_a_label_prefix_with_reserved_url_characters_still_recovers(tmp_path, capsys):
+  """R13: a permitted prefix such as `egm:handoff+` must survive the query."""
+  repo = make_repo(tmp_path / "repo",
+                   config={"repo": REPO, "labels": {"handoff_prefix": "egm:handoff+"}})
+  plan = make_plan(tmp_path / "artifacts", repo)
+  w = Harness(capsys)
+  w.repo, w.plan, w.artifacts = repo, plan, plan.parent
+  dry_run(w)
+  assert w.run("apply", "--plan", w.plan, "--yes")[0] == 0
+  listing = [c for c in w.gh.calls if c[0] == "api" and "/issues?" in c[1]]
+  assert listing and "%2B" in listing[0][1], listing
+  assert w.run("verify", "--plan", w.plan)[0] == 0
+
+
+def test_an_unpublished_decision_does_not_release_the_unit(world):
+  """R2-12: an answer the builder cannot see is not an answer."""
+  applied(world)
+  assert world.run("verify", "--plan", world.plan)[0] == 0
+  code, out = world.run("decide", "--plan", world.plan, "--unit", "U03",
+                        "--decision", "D2", "--answer", "50")
+  assert code == 0 and "NOT YET PUBLISHED" in out
+  code, out = world.run("status", "--plan", world.plan)
+  assert "U03/D2" in out and "NOT PUBLISHED" in out
+  code, out = world.run("decide", "--plan", world.plan, "--unit", "U03",
+                        "--decision", "D2", "--published", "https://github.com/x/y/issues/4#c1")
+  assert code == 0
+  code, out = world.run("status", "--plan", world.plan)
+  assert "open blocking decision U03/D2" not in out
+
+
+def test_code_span_runs_must_match_in_length(world):
+  """R2-10: a one-backtick opener is not closed by a two-backtick run, so the
+  text between them is rendered, not code."""
+  scan = world.ns["scan_text"]
+  config = {"banned_terms": ["(?i)secret-codename"], "fix_request_mention": None}
+  problems = scan("`@alice secret-codename``\n", config, "body")
+  assert any("bare mention" in p for p in problems), problems
+  assert any("banned term" in p for p in problems), problems
+  assert scan("`@alice secret-codename`\n", config, "body") == []
+  assert scan("``@alice secret-codename``\n", config, "body") == []
+  # an unclosed span is not a span
+  assert scan("`@alice secret-codename\n", config, "body") != []
+
+
+def test_repeated_deferrals_verify_against_the_current_wave(world):
+  """R2-08: the initial wave is immutable; the current one moves with each
+  authorised label edit."""
+  gh = applied(world)
+  for wave in (2, 3):
+    gh.labels[f"egm:wave-{wave}"] = {"name": f"egm:wave-{wave}", "color": "1b6ef3"}
+    assert world.run("defer", "--plan", world.plan, "--unit", "U03",
+                     "--to-wave", wave, "--yes")[0] == 0
+  code, out = world.run("verify", "--plan", world.plan)
+  assert code == 0 and "MISMATCH" not in out, out
+  record = state_of(world)["units"]["U03"]
+  assert record["initial_wave"] == 3 or record["current_wave"] == 3

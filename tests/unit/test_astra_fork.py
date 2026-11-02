@@ -343,3 +343,29 @@ def test_handoff_gate_panel_matches_the_handoff_skill() -> None:
           "| `egm-implementation-readiness` + Astra lane | "
           "`egm-implementation-readiness`, `egm-codebase-details` + Astra lane |") in flat
   assert "`egm-design` + Astra lane |" not in flat.split("Handoff gate")[1][:400]
+
+
+def test_every_gh_command_in_the_skills_is_pinned_to_github_com() -> None:
+  """R2-03: gh_env() pins only the helper's own subprocesses; a bare `gh` in a
+  skill still follows an inherited GH_HOST to an enterprise server."""
+  for path in ("skills/egm-wave/SKILL.md", "skills/egm-handoff/SKILL.md",
+               "skills/egm-wave/references/foreman_brief.md"):
+    text = read(path)
+    for match in re.finditer(r"(?<![\w=.])gh (issue|pr|api|label|auth) ", text):
+      tail = " ".join(text[match.start():match.start() + 90].split())
+      # Prose such as "one `gh issue edit` of the wave label" names what the
+      # helper does; only a command the skill actually runs needs the prefix.
+      if "-R " not in tail and "repos/" not in tail and "--hostname" not in tail:
+        continue
+      start = max(0, match.start() - 30)
+      assert "GH_HOST=github.com" in " ".join(text[start:match.start()].split()), (
+          f"{path}: unpinned `{tail[:60]}`")
+
+
+def test_the_amendment_path_requires_reconfirmation() -> None:
+  """R2-09: after the confirmed-snapshot check, editing the plan and the issue
+  by hand is not enough; status and launch refuse until the plan is re-confirmed."""
+  wave = " ".join(read("skills/egm-wave/SKILL.md").split())
+  assert "re-confirmed" in wave
+  assert "`gate`, `dry-run` and `apply --yes` again" in wave
+  assert "require_confirmed_plan" in wave

@@ -116,7 +116,11 @@ call becomes a teammate that loads `CLAUDE.md` and loses the adapter's
 for.
 
 **GitHub writes.** Every `gh` write is one Bash approval, and no prefix allow
-rule is added for `gh`: a prefix rule also approves chained commands. The
+rule is added for `gh`: a prefix rule also approves chained commands. Every
+`gh` command the skills run is prefixed `GH_HOST=github.com`, and the helper
+pins the same host on its own calls: an inherited `GH_HOST` would otherwise
+send a comment, a review or an issue to an enterprise server that neither the
+approval nor the confirmed destination ever named. The
 helper's read-only subcommands are the default; only `apply --yes` writes
 issues, after a dry run you confirm.
 
