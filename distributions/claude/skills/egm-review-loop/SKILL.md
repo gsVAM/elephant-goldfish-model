@@ -156,10 +156,10 @@ file` mode is specified, confirm full-file line bounds).
 #### 2.3 Aggregated Resolution Hand-off
 
 1.  Pass `TargetFile`, the active line range, the aggregated `FindingsList`,
-    the round number as `Round` and the `RunCard` to the **`egm-resolve`**
-    workflow. It writes the user's final decisions to
-    `goldfish_dispositions_round_<n>.md`; a resumed Astra round reads that
-    file.
+    `Stage`, the round number as `Round` and the `RunCard` to the
+    **`egm-resolve`** workflow. It writes the user's final decisions to
+    `goldfish_dispositions_s<Stage>_r<n>.md`; a resumed Astra round reads its
+    `astra-*` rows.
 2.  Execute the resolution workflow in the primary Elephant context:
     *   Categorize findings into `CONTEST` vs. `PROPOSE FIX`.
     *   Save `goldfish_review_report.md` with your file-writing tool.

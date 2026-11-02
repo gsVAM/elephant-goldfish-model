@@ -4,7 +4,9 @@
 """Wiring checks for the fork: Astra lane, panels, run card, change notices."""
 
 from pathlib import Path
+import os
 import re
+import subprocess
 
 import pytest
 
@@ -34,9 +36,9 @@ def test_resource_files_are_linked() -> None:
   index = read("resources/README.md")
   assert "(review_panels.md)" in index and "(astra_lane.md)" in index
   resolve = read("skills/egm-resolve/SKILL.md")
-  assert "goldfish_dispositions_round_[Round].md" in resolve
+  assert "goldfish_dispositions_s[Stage]_r[Round].md" in resolve
   assert "never from the AI\n    suggestion" in resolve
-  assert "goldfish_dispositions_round_<n-1>.md" in LANE
+  assert "goldfish_dispositions_s<stage>_r<n-1>.md" in LANE
 
 
 def test_allowlists_are_stated() -> None:
@@ -71,14 +73,85 @@ def test_run_card_fields_are_present() -> None:
     assert text in PANELS, text
 
 
-def test_panel_file_is_claude_code_only_and_step_asks_nothing() -> None:
+def test_panel_file_is_claude_code_only() -> None:
   flat = " ".join(PANELS.split())
   assert ("Claude Code only. In any other host skip this file: no `printenv`, "
           "preflight, run card or panel question; run upstream's flow (Stages 5 "
           "to 9, all reviewers).") in flat
-  assert ("When `Step` was passed, ask neither question: use the panel "
-          "`EGM_PANEL` names (default Focused), show it on the run card, and "
-          "continue.") in flat
+
+
+def test_step_answers_only_the_mode_question() -> None:
+  flat = " ".join(PANELS.split())
+  assert "ask neither question" not in flat
+  assert "`Step` answers only Q1." in flat
+  assert "still show the card and ask Q2 alone" in flat
+  assert ("`EGM_PANEL` is set to an allowed value, or the invocation named the "
+          "panel (`Panel: astra | focused | full`") in flat
+  assert "Show the card in chat on every review" in flat
+
+
+def test_printenv_command_reads_every_egm_variable_and_nothing_else() -> None:
+  command = re.search(r"^    (printenv \| grep .*)$", PANELS, re.MULTILINE).group(1)
+  expected = {"EGM_ASTRA=off", "EGM_PANEL=full", "EGM_GOLDFISH_MODEL=opus",
+              "CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1"}
+  env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+         "EGMX_OTHER": "1", "NOT_EGM_ASTRA": "1", "HOME_EGM_": "1",
+         "CLAUDE_CODE_SUBAGENT_MODEL_FORCE_X": "1"}
+  env.update(line.split("=", 1) for line in expected)
+  result = subprocess.run(["/bin/sh", "-c", command], env=env, check=True,
+                          capture_output=True, text=True)
+  assert set(result.stdout.splitlines()) == expected, result.stdout
+
+
+def test_force_flag_uses_claude_boolean_rule() -> None:
+  flat = " ".join(PANELS.split())
+  assert "set and not `0`" not in flat and "unset or `0`" not in flat
+  assert ("on when its value is `1`, `true`, `yes` or `on` in any casing, and "
+          "off when it is unset, empty, `0`, `false`, `no` or `off`") in flat
+  assert "Any other value is `unknown`" in flat
+  assert "never write `forced`" in flat
+
+
+def test_inherit_is_never_passed_per_call() -> None:
+  flat = " ".join(PANELS.split())
+  assert ("A value of `inherit` is never passed, even when the user selected "
+          "it: omit that parameter.") in flat
+  assert "pass no other model or effort parameter" in flat
+
+
+def test_dispositions_are_keyed_by_stage_and_round() -> None:
+  resolve = read("skills/egm-resolve/SKILL.md")
+  assert "goldfish_dispositions_s[Stage]_r[Round].md" in resolve
+  assert "# Goldfish dispositions, stage [Stage], round [Round]" in resolve
+  assert "goldfish_dispositions_s<Stage>_r<n>.md" in read("skills/egm-review-loop/SKILL.md")
+  flat = " ".join(LANE.split())
+  assert ("`goldfish_dispositions_s<stage>_r<n-1>.md` exists and its first "
+          "lines name stage <stage>, round <n-1> and this `TargetFile`") in flat
+  for path in ("skills", "resources", "docs", "agents"):
+    for file in (ROOT / path).rglob("*.md"):
+      assert "dispositions_round" not in file.read_text(encoding="utf-8"), file
+  assert "dispositions_round" not in read("README.md")
+  review = " ".join(read("skills/egm-review/SKILL.md").split())
+  assert "`Stage`, `Round` (the loop's last round + 1) and `RunCard`" in review
+
+
+def test_run_card_reaches_every_report() -> None:
+  flat = " ".join(PANELS.split())
+  assert "prepend the card and the `What ran` lines to that file yourself" in flat
+  assert "pass `RunCard` on every `egm-resolve` call" in flat
+
+
+def test_astra_feedback_carries_only_astra_rows() -> None:
+  flat = " ".join(LANE.split())
+  assert "leave out every other reviewer's row" in flat
+  assert "the full text of goldfish_dispositions" not in flat
+  privacy = " ".join(read("docs/privacy.md").split())
+  assert "the Claude reviewers' findings are not sent" not in privacy
+  assert "rows of the dispositions file for Astra's own earlier findings" in privacy
+  assert ("The Claude conversation, the Claude reviewers' reports and their "
+          "dispositions rows are not sent.") in privacy
+  resolve = " ".join(read("skills/egm-resolve/SKILL.md").split())
+  assert "A `Reason` names no other reviewer's finding" in resolve
 
 
 def test_lane_launch_and_safety_rules() -> None:

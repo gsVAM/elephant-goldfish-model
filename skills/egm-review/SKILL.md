@@ -104,11 +104,10 @@ If your harness has no subagent tool, stop and tell the user: a review in the sa
 
 ### Step 2: Curated Pipeline Preset Selection
 
-0.  **Run card & panel (fork)**: Claude Code only. Read `resources/review_panels.md`. Read the
-    configuration, run the Astra preflight it names, show the run card, then
-    ask the review mode and the panel together as that file says. That prompt
-    is the one exception to the single-question rule (constraint 11 and the
-    invariants below).
+0.  **Run card & panel (fork)**: Claude Code only. Read `resources/review_panels.md`
+    and follow it: configuration, Astra preflight, run card, then the review
+    mode and panel questions. That prompt is the one exception to the
+    single-question rule (constraint 11 and the invariants below).
 1.  **Preset Gate Check**:
     *   If `Step` parameter was explicitly provided during invocation (e.g.
         `interactive`, `uninterrupted`, `feature_spec`, `implementation`, or an
@@ -213,8 +212,8 @@ Once the semantic split and execution preset are confirmed:
     *   **Panel (fork)**: When the panel is not Full, follow the routing table
         in `resources/review_panels.md` instead of the sequences above. In
         every panel, at Stages 7 and 9 pass `egm-review-loop` the panel's
-        Claude reviewers (`resources/review_panels.md` section 4) plus
-        `AstraLane`, `Stage`, `RunCard`, `GoldfishModel` and `GoldfishEffort`.
+        Claude reviewers (its section 4) plus `AstraLane`, `Stage`, `RunCard`,
+        `GoldfishModel` and `GoldfishEffort`.
 
 --------------------------------------------------------------------------------
 
@@ -247,7 +246,8 @@ plain chat):
     *   **Hand-off to Resolver**: The agent invokes `egm-resolve` in the primary
         Elephant context window on the target range (`FeatureRange` or
         `DetailedRange`), passing the parsed findings from `critic_report.md` or
-        `implementation_readiness_report.md`.
+        `implementation_readiness_report.md`, with `Stage`, `Round` (the loop's
+        last round + 1) and `RunCard` (fork).
     *   **Resolution Workflow**: The Elephant classifies each finding (`PROPOSE
         FIX` vs `CONTEST`), writes `goldfish_review_report.md`, and executes
         approved edits on `TargetFile` via file editing tools.

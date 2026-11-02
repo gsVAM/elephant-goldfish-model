@@ -9,7 +9,7 @@ description: >-
   negotiation/re-sync checkpoints.
 ---
 
-<!-- Modified by the elephant-goldfish-model Astra fork (gsVAM), 2026: run card on the report, persisted dispositions per round. -->
+<!-- Modified by the elephant-goldfish-model Astra fork (gsVAM), 2026: run card on the report, persisted dispositions per stage and round. -->
 
 # Goldfish Review: Resolve
 
@@ -38,6 +38,8 @@ The caller or orchestration driver provides exactly these parameters:
 *   **`FindingsList`**: Aggregated flat list of findings from Goldfish
     reviewers.
 *   **`Round`** (optional, fork): the review-loop round number; `1` when
+    omitted.
+*   **`Stage`** (optional, fork): the review stage, `7` or `9`; `0` when
     omitted.
 *   **`RunCard`** (optional, fork): text to put at the top of the report.
 
@@ -190,7 +192,7 @@ Interpret the user's action/response as follows:
     file remains structurally coherent and valid markdown.
 2.  Mark the report as resolved (add a `Status: resolved` line at the top).
 3.  **Persist dispositions (fork)**: Write
-    `goldfish_dispositions_round_[Round].md` next to the report, one row per
+    `goldfish_dispositions_s[Stage]_r[Round].md` next to the report, one row per
     finding, from the user's final decision at the gate, never from the AI
     suggestion. Final categories: `fixed` (an edit was applied, including an
     overruled contest or an escalation the user resolved by adding the fact),
@@ -199,7 +201,7 @@ Interpret the user's action/response as follows:
     apply), `escalated` (given to the user and left unchanged).
 
     ```markdown
-    # Goldfish dispositions, round [Round]
+    # Goldfish dispositions, stage [Stage], round [Round]
 
     **Target:** `[TargetFile]` (`[LineRange]`)
 
@@ -207,6 +209,9 @@ Interpret the user's action/response as follows:
     | --- | --- | --- | --- | --- |
     | [finding id] | [ReviewerPersona] | [fixed \| contested \| declined \| escalated] | [one line] | [Start-End, or -] |
     ```
+
+    A `Reason` names no other reviewer's finding: on a resumed Astra round the
+    `astra-*` rows go to OpenAI (`resources/astra_lane.md` section 7).
 
 4.  **Handoff**: Exit cleanly back to the caller (such as `egm-review-loop`)
     with the count of accepted fixes, contested items, escalated items,

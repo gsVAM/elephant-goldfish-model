@@ -62,7 +62,7 @@ first line says what it is.
     <one range line per reviewed range, from the table below>
     Read other lines as context only.
     Reading list: <GoldfishContext paths, or none>
-    Do not read EGM output files (*_report.md, goldfish_dispositions_round_*.md, astra_brief_*.md, concepts_brief.md, design_draft.md, discussion_summary.md). They hold other reviewers' work.
+    Do not read EGM output files (*_report.md, goldfish_dispositions_s*_r*.md, astra_brief_*.md, concepts_brief.md, design_draft.md, discussion_summary.md). They hold other reviewers' work.
     A file that the document proposes to create is not a defect.
     Severity: high = the document cannot be approved or built as written. medium = it must change before approval. low = optional.
     path = "<plan path>:<start>-<end> (<section heading>)" of the passage at fault.
@@ -71,8 +71,8 @@ first line says what it is.
     Standards:
     <for each range line, the standard's file name and full text>
     <Resumed round n only:>
-    DISPOSITIONS FROM ROUND <n-1>:
-    <the full text of goldfish_dispositions_round_<n-1>.md>
+    DISPOSITIONS FROM ROUND <n-1> (your own findings only):
+    <the header lines and the `astra-*` rows of goldfish_dispositions_s<stage>_r<n-1>.md; leave out every other reviewer's row>
 
 | Review | Range lines |
 | --- | --- |
@@ -193,9 +193,12 @@ user whether to try the next round, switch to Focused without Astra, or stop.
 - `fresh`: every round is a new Astra session.
 - `resume`: round 1 of a stage is a fresh session. Round n > 1 of the same
   stage resumes round n-1 with `--resume '<PREVIOUS_RESULT_JSON>'` and a brief
-  that ends with the dispositions `egm-resolve` wrote to
-  `goldfish_dispositions_round_<n-1>.md` (section 2). Resume never crosses
-  stages: Stage 9 round 1 is fresh even after Stage 7.
+  that ends with the `astra-*` rows of the dispositions `egm-resolve` wrote
+  to `goldfish_dispositions_s<stage>_r<n-1>.md` (section 2). The Claude
+  reviewers' rows stay out: each goldfish sees the document and its own
+  history, never another reviewer's findings, and nothing of Claude's review
+  goes to OpenAI. Resume never crosses stages: Stage 9 round 1 is fresh even
+  after Stage 7.
 
 Before a resumed launch, read the previous round's `result.json`. Resume only
 when all of these hold; otherwise launch fresh and write `fresh: previous
@@ -207,7 +210,8 @@ Astra round not resumable (<reason>)` on the card and in the report:
 - `repo` equals `<REPO_ROOT>` and `plan` equals `<TARGET_FILE>`, both as the
   absolute paths this round uses;
 - `session_id` is a UUID;
-- `goldfish_dispositions_round_<n-1>.md` exists.
+- `goldfish_dispositions_s<stage>_r<n-1>.md` exists and its first lines name
+  stage <stage>, round <n-1> and this `TargetFile`.
 
 A resumed run re-reads the edited document and is told not to relitigate
 resolved items without new evidence. The previous round's skipped lane (`not

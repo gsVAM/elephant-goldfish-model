@@ -17,7 +17,9 @@ run card or panel question; run upstream's flow (Stages 5 to 9, all reviewers).
 
 Read every value with one read-only command:
 
-    printenv | grep -E '^(EGM_|CLAUDE_CODE_(SUBAGENT_MODEL|SUBAGENT_MODEL_FORCE|EFFORT_LEVEL|PLUGIN_CACHE_DIR)|CLAUDE_CONFIG_DIR)=' || true
+    printenv | grep -E '^(EGM_[^=]*|CLAUDE_CODE_(SUBAGENT_MODEL|SUBAGENT_MODEL_FORCE|EFFORT_LEVEL|PLUGIN_CACHE_DIR)|CLAUDE_CONFIG_DIR)=' || true
+
+`EGM_[^=]*` is every name that begins with `EGM_`; the other names are exact.
 
 Validate each `EGM_*` value against its allowlist before you use it. A value
 that fails is ignored, the default applies, and you tell the user in one line:
@@ -38,9 +40,11 @@ Harness variables, read by the same command and never changed by EGM:
 `CLAUDE_CODE_SUBAGENT_MODEL` (a default model, ranked below a per-call `model`
 and below the adapters' `model: inherit`, so it reaches only a general-purpose
 fallback subagent with no persona adapter), `CLAUDE_CODE_SUBAGENT_MODEL_FORCE`
-(a flag, `1`, not a model: every subagent runs on `CLAUDE_CODE_SUBAGENT_MODEL`
-if set, else on the main conversation's model, and no per-call `model` can be
-passed) and `CLAUDE_CODE_EFFORT_LEVEL` (overrides per-call effort).
+(a flag, not a model. It is on when its value is `1`, `true`, `yes` or `on`
+in any casing, and off when it is unset, empty, `0`, `false`, `no` or `off`:
+Claude Code's rule for on/off variables. Any other value is `unknown`. While
+on, every subagent runs on `CLAUDE_CODE_SUBAGENT_MODEL` if set, else on the
+main conversation's model, and no per-call `model` can be passed) and `CLAUDE_CODE_EFFORT_LEVEL` (overrides per-call effort).
 
 Order of work at Step 2: read the variables; if `EGM_ASTRA` is not `off`, run
 the preflight in `resources/astra_lane.md` section 1; show the run card; ask
@@ -48,10 +52,15 @@ the mode and panel (section 3).
 
 ## 2. Run card
 
-Show the card in chat before the mode and panel prompt. Write it, followed by a
-`What ran` line per lane (`completed` or `not run (<reason>)`), at the top of
-every report of this review: `*_report.md`, `goldfish_review_report.md`,
-`consolidated_review_report.md`.
+Show the card in chat on every review: before the mode and panel prompt, or
+before the first stage when `Step` and the panel were both given (section 3).
+Write it, followed by a `What ran` line per lane (`completed` or `not run
+(<reason>)`), at the top of every report of this review: `*_report.md`,
+`goldfish_review_report.md`, `consolidated_review_report.md`. A report a
+subagent writes (the synthesizer's, or a directly dispatched reviewer's) has
+no card: prepend the card and the `What ran` lines to that file yourself, right
+after the subagent returns and before you read it further, and pass `RunCard`
+on every `egm-resolve` call, including the ones at the Stage 7 and 9 gates.
 
 ```text
 EGM run card
@@ -62,7 +71,7 @@ EGM run card
 | Astra goldfish | GPT-6 Astra through claudex-loop; document and repository, no conversation | <EGM_ASTRA_MODEL> -> requested only | <EGM_ASTRA_EFFORT> -> requested only |
 Astra memory: <resume | fresh>. Astra lane: <available | not run (<reason>)>.
 Panel: <Astra only | Focused | Full>. Time: an Astra run takes about 8 minutes (median of measured runs, up to 30); Claude reviewers run alongside it.
-Data notice: when the Astra lane runs, the whole target file, the brief, any file your OS account can read that Astra opens, and your Codex AGENTS.md and memories go to OpenAI under the account `codex login status` reports.
+Data notice: when the Astra lane runs, the whole target file, the brief (on a resumed round, with your decisions on Astra's own earlier findings), any file your OS account can read that Astra opens, and your Codex AGENTS.md and memories go to OpenAI under the account `codex login status` reports.
 ```
 
 Cell rules:
@@ -70,11 +79,13 @@ Cell rules:
 - Elephant model: the model you know yourself to be from your own context;
   `unknown` if you do not know. Effort is always `session setting`: Claude Code
   does not expose it to skills. Do not guess.
-- Claude goldfish, effective model: when `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` is
-  set and not `0`, `CLAUDE_CODE_SUBAGENT_MODEL` if set, else the elephant's
-  model, marked `(forced by CLAUDE_CODE_SUBAGENT_MODEL_FORCE)`, and pass no
-  per-call `model`; else the requested alias when it is not `inherit`; else
-  the elephant's model (`inherit`, from the adapters' `model: inherit`).
+- Claude goldfish, effective model, by the FORCE flag as section 1 reads it.
+  On: `CLAUDE_CODE_SUBAGENT_MODEL` if set, else the elephant's model, marked
+  `(forced by CLAUDE_CODE_SUBAGENT_MODEL_FORCE)`, and pass no per-call
+  `model`. Off: the requested alias when it is not `inherit`, else the
+  elephant's model (`inherit`, from the adapters' `model: inherit`). Unknown:
+  `unknown (CLAUDE_CODE_SUBAGENT_MODEL_FORCE=<value> is not a documented
+  boolean)`, and pass no per-call `model`; never write `forced` for it.
 - Claude goldfish, effective effort: `CLAUDE_CODE_EFFORT_LEVEL` when set,
   marked `(forced by CLAUDE_CODE_EFFORT_LEVEL)`; else the requested value when
   it is not `inherit` and the Agent tool offers an `effort` parameter; else
@@ -92,9 +103,12 @@ Cell rules:
 Ask both questions in one turn, right after the card:
 
 - **Q1, review mode**: the four options of the Curated Pipeline Presets gate
-  in `egm-review`, unchanged. When `Step` was passed, ask neither question:
-  use the panel `EGM_PANEL` names (default Focused), show it on the run card,
-  and continue.
+  in `egm-review`, unchanged. `Step` answers only Q1. When `Step` was passed,
+  still show the card and ask Q2 alone (one single-select), unless the panel
+  was also given explicitly: `EGM_PANEL` is set to an allowed value, or the
+  invocation named the panel (`Panel: astra | focused | full`, an optional
+  `egm-review` input). Then use that panel, show it on the card and ask
+  nothing. An unset `EGM_PANEL` is a default, not a choice.
 - **Q2, panel** (option 0 is the panel `EGM_PANEL` names; the default is
   Focused):
   - `Focused: Claude design critic + Astra at Stage 7; Claude readiness reviewer + Astra at Stage 9`
@@ -171,14 +185,16 @@ Rules that apply to every row:
 The adapters in `.claude-plugin/agents/` keep `model: inherit`; do not edit
 them. The elephant passes the user's choice per call:
 
-- **Direct dispatch**: pass `model: <alias>` on each Agent call when
-  `EGM_GOLDFISH_MODEL` (or the run card choice) is not `inherit` and
-  `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` is unset or `0` (section 2). Pass
-  `effort: <value>` only when the user chose an effort on the run card or set
-  `EGM_GOLDFISH_EFFORT`, and the Agent tool offers an `effort` parameter.
-  Otherwise pass neither.
-- **Synthesizer dispatch**: add this line to the synthesizer's prompt, with the
-  same values: `Spawn each reviewer with model: <alias> and effort: <value> as
-  the subagent tool's per-call parameters; omit a value that is inherit, that
-  the tool does not offer, or that CLAUDE_CODE_SUBAGENT_MODEL_FORCE overrides.`
+- **Direct dispatch**: decide the two parameters independently. Pass
+  `model: <alias>` on each Agent call when `EGM_GOLDFISH_MODEL` (or the run
+  card choice) is not `inherit` and the FORCE flag is off (section 2). Pass
+  `effort: <value>` when `EGM_GOLDFISH_EFFORT` (or the run card choice) is not
+  `inherit` and the Agent tool offers an `effort` parameter. A value of
+  `inherit` is never passed, even when the user selected it: omit that
+  parameter.
+- **Synthesizer dispatch**: add this line to the synthesizer's prompt, naming
+  only the parameters you would pass yourself: `Spawn each reviewer with
+  [model: <alias>] [and effort: <value>] as the subagent tool's per-call
+  parameters; pass no other model or effort parameter.` Leave the line out
+  when you would pass neither.
 - Report requested and effective values on the run card as section 2 says.

@@ -23,7 +23,7 @@ This repository is a modified version of [google/elephant-goldfish-model](https:
 - **Panel presets.** Every review asks for the panel together with the review mode: *Astra only* (one adversarial read), *Focused* (default: Claude design critic plus Astra at Stage 7, Claude readiness reviewer plus Astra at Stage 9) or *Full* (every upstream reviewer, Stages 5 to 9, plus Astra).
 - **A run card.** Before the review: who each role is, what context it has, and its requested and effective model and effort. The card is repeated at the top of every report with what actually ran.
 - **Per-reviewer model and effort** for the Claude goldfish, from `EGM_GOLDFISH_MODEL` and `EGM_GOLDFISH_EFFORT`.
-- **Persisted dispositions.** `egm-resolve` writes your final decision per finding to `goldfish_dispositions_round_<n>.md`; a resumed Astra round reads it.
+- **Persisted dispositions.** `egm-resolve` writes your final decision per finding to `goldfish_dispositions_s<stage>_r<n>.md`; a resumed Astra round reads its own rows.
 
 **Prerequisites for the Astra lane** (without them the review runs Claude-only and says so): the claudex-loop plugin (2.1.0 or later) installed in Claude Code, Codex CLI 0.153.4 or later on `PATH`, `codex login` completed, and Python 3.10 or later as `python3`. Install claudex-loop with `claude plugin marketplace add chaseai-yt/claudex-loop` and `claude plugin install claudex-loop@claudex-loop`; the lane looks for the runner only under the `claudex-loop` marketplace name.
 

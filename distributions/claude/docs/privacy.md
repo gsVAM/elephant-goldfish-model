@@ -38,11 +38,13 @@ runner and the Codex CLI. When it runs, these leave the machine and go to
 OpenAI under the account `codex login status` reports, on that account's terms:
 the whole target design document (not only the reviewed range), the review
 brief EGM writes (including the standard text and, on a resumed round, the
-dispositions file), the runner's fixed instructions, any file the user's OS
-account can read that Astra opens inside or outside the repository (the
-read-only sandbox blocks writes, not reads), and the user's Codex `AGENTS.md`
-and memories. The Claude conversation and the Claude reviewers' findings are
-not sent.
+rows of the dispositions file for Astra's own earlier findings: finding id,
+the author's final decision and a one-line reason, which EGM writes without
+quoting any other reviewer), the runner's fixed instructions, any file the
+user's OS account can read that Astra opens inside or outside the repository
+(the read-only sandbox blocks writes, not reads), and the user's Codex
+`AGENTS.md` and memories. The Claude conversation, the Claude reviewers'
+reports and their dispositions rows are not sent.
 
 The lane runs only after a run card with this notice is shown, and only when
 the claudex-loop runner, the Codex CLI and a Codex login are present. Opt out
