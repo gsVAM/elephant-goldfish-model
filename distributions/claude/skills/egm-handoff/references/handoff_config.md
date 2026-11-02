@@ -51,3 +51,10 @@ command: `issue`, `pr` and `label` commands take `-R OWNER/NAME`; `api` calls
 name the repository in the endpoint, never through the `{owner}`/`{repo}`
 placeholders (the helper's `cwd` is the artifact directory, not the
 repository); the GraphQL read passes `owner` and `name` as variables.
+
+## One command at a time
+
+The helper is **single-writer**: it has no locking and needs none. Run one
+command, let it finish, run the next. `status --wait` is the only long command
+and it only reads while waiting, saving once when it returns; it refuses
+`--watch` and `--confirm-landed` so a long wait can never record a choice late.

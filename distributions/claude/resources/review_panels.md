@@ -259,6 +259,38 @@ in one line with the trend and the open findings: continue, accept the
 remainder, or stop. Never start round 6 without their answer. The cap is a
 cost guard, not a quality bar: converging at round 2 is the normal case.
 
+### When it does not converge, change the thing, not the round
+
+A review that will not converge is evidence about the work, not about the
+review. Counts that stop falling, or regressions that stay high, mean the
+artefact is too large or too clever for what it has to do, and another round
+will find another layer of the same thing. Stop reviewing and ask what to
+remove. In order of preference:
+
+1. **Delete the capability.** Does anything the user asked for need it? A
+   capability nobody requested is the cheapest thing to lose, and it takes its
+   whole defect class with it.
+2. **Narrow the contract.** Declare the simpler rule and make it true, rather
+   than handling the general case: one writer instead of locking, one shape of
+   input instead of parsing every shape, refusing instead of recovering.
+3. **Shrink the surface.** Fewer commands, fewer options, fewer states.
+4. Only then, fix the findings one by one.
+
+Record the decision and what it removed, so the next reviewer sees a smaller
+artefact rather than the same one with patches. A later round that reviews
+less code is the goal; a later round that reviews the same code with more
+conditionals in it is the failure.
+
+**Worked example, from this plugin's own 0.2.0 build.** Four rounds found 51
+findings; 82% were in one 2,500-line helper that the plan had specified at
+about 450 lines, and only 15% in the skills' prompts. Round 4 marked 7 of its 9
+findings as regressions in round 3's fixes - the signal above. Four of the
+seven high findings across all rounds existed solely because the helper tried
+to support two commands running at once, which nobody had asked for. Removing
+concurrency support, rather than fixing the lock a fifth time, deleted that
+defect class outright. The lesson is the general one: when a review stops
+converging, the next move is a deletion, not a patch.
+
 Where the loops differ: the handoff gate may also require two consecutive
 clean rounds, because a document round is cheap. A wave's PR review does not,
 because every round costs an inspect run and a round of builder time.

@@ -16,7 +16,6 @@ import hashlib
 import json
 import os
 import re
-import contextlib
 import subprocess
 import urllib.parse
 import sys
@@ -200,8 +199,6 @@ def _subprocess_gh(args, cwd, stdin=None):
 
 
 GH = _subprocess_gh
-LOCK_POLL = 0.2
-_HELD_LOCKS = set()
 SLEEP = time.sleep
 NOW = time.time
 ARTIFACT_DIR = Path.cwd()
@@ -892,59 +889,6 @@ def fill_numbers(body: str, numbers: dict, tracking=None) -> str:
 
 
 # ---------------------------------------------------------------- state
-
-
-@contextlib.contextmanager
-def state_lock(artifact_dir: Path, timeout=30):
-  """Serialize read-modify-write on `handoff_state.json`.
-
-  Atomic replacement keeps the file parseable but does not stop a watcher and a
-  foreground command from each loading, deciding, and writing back: the second
-  save erases the first. An O_EXCL lock file works on every OS the fork's CI
-  runs, including Windows, where `fcntl` does not exist."""
-  path = state_path(artifact_dir).with_name("handoff_state.lock")
-  key = str(path)
-  if key in _HELD_LOCKS:
-    # Re-entrant within one process: `launch` holds the lock and then asks
-    # `status_pass` for readiness, which takes it again.
-    yield
-    return
-  deadline = NOW() + timeout
-  while True:
-    try:
-      handle = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-      break
-    except FileExistsError:
-      # Never take a lock over on age: `apply` legitimately holds this one
-      # across network calls, write pacing and 60-second rate-limit sleeps, so
-      # any age threshold short enough to be useful is short enough to steal a
-      # live lock and let two commands write at once. Wait, then refuse with
-      # an instruction; a human deleting a file they can see beats a heuristic.
-      if NOW() >= deadline:
-        holder = ""
-        try:
-          holder = f" (held by pid {path.read_text(encoding='utf-8').strip()})"
-        except OSError:
-          pass
-        raise HandoffError(
-            f"another egm_handoff command is holding {path.name}{holder}. "
-            f"A long `apply` can hold it for minutes. Wait for it to finish; "
-            f"if no egm_handoff command is running, delete that file and retry.")
-      SLEEP(LOCK_POLL)
-  try:
-    os.write(handle, str(os.getpid()).encode())
-    os.close(handle)
-    _HELD_LOCKS.add(key)
-    yield
-  finally:
-    _HELD_LOCKS.discard(key)
-    try:
-      # Only remove the lock this process owns: a file at this path now may
-      # belong to someone else.
-      if path.read_text(encoding="utf-8").strip() == str(os.getpid()):
-        path.unlink()
-    except OSError:
-      pass
 
 
 def state_path(artifact_dir: Path) -> Path:
@@ -1895,8 +1839,7 @@ def unit_view(handoff: Handoff, uid):
     # user picks the replacement with --watch.
     view["status"] = f"pr #{pr['number']} closed unmerged (choose a replacement with --watch)"
   override = record.get("landed_confirmed")
-  if override and record.get("landed_confirmation_void") \
-      and uid not in getattr(handoff, "confirmed_now", set()):
+  if override and record.get("landed_confirmation_void"):
     override = None
   if override and not closed_done:
     # The exception is for an issue closed as completed with no watched PR; it
@@ -1930,7 +1873,7 @@ def issue_closed_completed(handoff: Handoff, uid) -> bool:
   return issue.get("state") == "closed" and issue.get("state_reason") == "completed"
 
 
-def status_pass(handoff: Handoff):
+def status_pass(handoff: Handoff, save=True):
   state = handoff.state
   state.setdefault("units", {})
   views = {uid: unit_view(handoff, uid) for uid in handoff.graph.order}
@@ -1961,54 +1904,8 @@ def status_pass(handoff: Handoff):
                            "pr_state": v.get("pr_state"),
                            "candidates": v["candidates"]} for u, v in views.items()},
              "at": now_iso()}
-  # A watcher sleeping between polls must not write back a stale copy of the
-  # whole file: the main conversation records decisions, launches and deferrals
-  # while it sleeps. Re-read, merge only the field this pass owns, save.
-  with state_lock(handoff.artifact_dir):
-    return status_merge(handoff, state, summary, open_blocking)
-
-
-def status_merge(handoff: Handoff, state, summary, open_blocking):
-  fresh = load_state(handoff.artifact_dir)
-  if fresh:
-    fresh["status"] = summary
-    # The watched PR is the user's choice, not an observation: only the
-    # invocation that was given --watch may write it, and only while nobody
-    # else has chosen a different one since. Everything else here is polled.
-    for uid, record in (state.get("units") or {}).items():
-      target = fresh.setdefault("units", {}).setdefault(uid, {})
-      mine = uid in getattr(handoff, "watch_owned", set())
-      if mine:
-        # This invocation chose the PR: its selection and observation are
-        # written together, so neither can describe the other's PR.
-        for key in ("watch", "pr", "landed_confirmed"):
-          if record.get(key) is not None:
-            target[key] = record[key]
-        if uid in getattr(handoff, "confirmed_now", set()):
-          # A fresh confirmation and the removal of the old invalidation land
-          # together, or the next command revives the stale one.
-          target.pop("landed_confirmation_void", None)
-        if record.get("status"):
-          target["status"] = record["status"]
-        continue
-      selected = (target.get("watch") or {}).get("number")
-      observed = (record.get("pr") or {}).get("number")
-      # A poll writes back what it observed, but never resurrects an
-      # observation of a PR the user has since stopped watching.
-      if record.get("pr") and (selected is None or selected == observed):
-        target["pr"] = record["pr"]
-      if record.get("status"):
-        target["status"] = record["status"]
-      if uid in getattr(handoff, "confirmed_now", set()):
-        # A fresh confirmation in this invocation clears the old invalidation;
-        # both must land together or the next command revives the stale one.
-        target.pop("landed_confirmation_void", None)
-      elif record.get("landed_confirmation_void"):
-        target["landed_confirmation_void"] = record["landed_confirmation_void"]
-    save_state(handoff.artifact_dir, fresh)
-    handoff.state = state = fresh
-  else:
-    state["status"] = summary
+  state["status"] = summary
+  if save:
     save_state(handoff.artifact_dir, state)
   return summary, open_blocking
 
@@ -2044,6 +1941,11 @@ def cmd_status(args):
   require_confirmed_plan(handoff)
   require_reviewed_pair(handoff)
   state.setdefault("units", {})
+  if args.wait and (args.watch or args.confirm_landed):
+    raise HandoffError(
+        "--wait only watches; it does not record a choice. Run `status --watch "
+        "<unit>=<pr>` or `--confirm-landed <unit>` on its own first, then "
+        "`status --wait`.")
   for item in args.watch or []:
     uid, _, number = item.partition("=")
     if uid not in handoff.plan.units or not number.isdigit():
@@ -2058,7 +1960,6 @@ def cmd_status(args):
     record["watch"] = {"number": int(number), "at": now_iso()}
     record["pr"] = pr
     record["status"] = None
-    handoff.watch_owned = getattr(handoff, "watch_owned", set()) | {uid}
   for uid in args.confirm_landed or []:
     view = unit_view(handoff, uid)
     if view["pr"] or not issue_closed_completed(handoff, uid):
@@ -2068,16 +1969,11 @@ def cmd_status(args):
     target = state["units"].setdefault(uid, {})
     target["landed_confirmed"] = now_iso()
     target.pop("landed_confirmation_void", None)
-    handoff.watch_owned = getattr(handoff, "watch_owned", set()) | {uid}
-    handoff.confirmed_now = getattr(handoff, "confirmed_now", set()) | {uid}
   fingerprint = lambda s: {u: (v["pr"], v["head"], v["status"], v["landed"],
                               v.get("issue_state"), v.get("pr_state"))
                            for u, v in s["units"].items()}
   previous = fingerprint(state["status"]) if state.get("status") else None
-  summary, open_blocking = status_pass(handoff)
-  # The selection has now been written. A long watcher must not keep claiming
-  # it: a newer `--watch` in another invocation is the human's later choice.
-  handoff.watch_owned = set()
+  summary, open_blocking = status_pass(handoff, save=not args.wait)
   if args.wait:
     deadline = NOW() + args.wait
     previous = previous if previous is not None else fingerprint(summary)
@@ -2091,7 +1987,11 @@ def cmd_status(args):
         print("deadline: no change")
         break
       SLEEP(min(WAIT_INTERVAL, max(1, deadline - NOW())))
-      summary, open_blocking = status_pass(handoff)
+      summary, open_blocking = status_pass(handoff, save=False)
+  if args.wait:
+    # One write, when the wait is over: while it waits it only reads, so no
+    # other command can be overwritten by a sleeping watcher.
+    save_state(handoff.artifact_dir, state)
   print_status(handoff, summary, open_blocking)
   return 0
 
@@ -2534,30 +2434,15 @@ def build_parser():
   return parser
 
 
-# Commands that load the state, decide, and write it back. `status` is absent on
-# purpose: it may wait for minutes and must not hold the lock across its sleeps,
-# so it takes the lock per pass instead (see status_pass).
-LOCKED_COMMANDS = ("approve", "graph", "gate", "dry-run", "apply", "verify",
-                   "launch", "defer", "decide", "record-launch", "prepare",
-                   "collect")
-
-
-def artifact_dir_of(args):
-  for attr in ("state", "plan"):
-    value = getattr(args, attr, None)
-    if value:
-      return Path(value).expanduser().resolve().parent
-  value = getattr(args, "artifacts", None)
-  return Path(value).expanduser().resolve() if value else None
+# One command at a time. `egm_handoff` is a single-writer tool: run one command,
+# let it finish, run the next. Nothing here coordinates concurrent writers, and
+# nothing needs to - every command is short except `status --wait`, which only
+# reads while it waits and saves once when it returns.
 
 
 def main(argv=None):
   args = build_parser().parse_args(argv)
   try:
-    folder = artifact_dir_of(args) if args.command in LOCKED_COMMANDS else None
-    if folder and folder.is_dir():
-      with state_lock(folder):
-        return args.func(args)
     return args.func(args)
   except HandoffError as error:
     print(f"egm_handoff: {error}", file=sys.stderr)

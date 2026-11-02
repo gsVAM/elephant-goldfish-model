@@ -61,7 +61,9 @@ question); the others have defaults.
 (Python 3.10 or later, standard library only; `gh` 2.x logged in). Run every
 command as one Bash call, `python3 '<HELPER>' <subcommand> ...`, absolute
 paths in single quotes, no chaining, pipes, redirects or environment
-variables; the Bash `timeout` is the default. The commands and the files they
+variables; the Bash `timeout` is the default. **One command at a time**: the
+helper is single-writer, so let each command finish before starting the next.
+The commands and the files they
 write are in `references/handoff_plan.md` section 6; the issue template is
 `references/issue_template.md`; the repository config `.egm/handoff.json`
 (repo, labels, template, banned terms, the one allowed mention) is

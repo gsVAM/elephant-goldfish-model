@@ -189,6 +189,11 @@ values filled in. One foreman per in-flight issue, at most 5 at once.
     reports `prepared`. A leftover worktree from an interrupted round is
     removed when it is clean and no run of it is still `launched`; a dirty
     one stops with `remove it by hand`.
+`status --wait` only reads while it waits and records what it saw once, when
+it returns; it refuses `--watch` and `--confirm-landed`. Record a choice with
+its own `status` call first. The helper is single-writer: never run two
+helper commands at once.
+
 3.  **Launch** (the elephant, from this main conversation, never a
     subagent). Read `foreman_<id>_r<r>_launch.md`; check the line against
     `resources/astra_lane.md` section 3b (single quotes, no chaining,

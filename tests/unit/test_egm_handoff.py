@@ -1370,23 +1370,6 @@ def test_prepare_refuses_a_selection_its_observation_contradicts(world):
   assert code == 1 and "watches PR #71" in out and "describes #70" in out
 
 
-def test_a_second_command_cannot_write_through_a_held_lock(world):
-  """R3-02: atomic replacement keeps the file parseable but does not stop two
-  writers from each loading, deciding, and saving over one another."""
-  lock = world.ns["state_lock"]
-  HandoffError = world.ns["HandoffError"]
-  applied(world)
-  held = world.artifacts / "handoff_state.lock"
-  held.write_text("99999", encoding="utf-8")
-  try:
-    code, out = world.run("launch", "--plan", world.plan, "--wave", 1, "--units", "U01")
-    assert code == 1 and "handoff_state.lock" in out
-  finally:
-    held.unlink()
-  # and it is re-entrant: launch holds it, then asks status_pass for readiness
-  assert world.run("launch", "--plan", world.plan, "--wave", 1, "--units", "U01")[0] == 0
-
-
 def test_a_completed_label_write_binds_the_destination(world):
   """R3-03: created_anything ignored labels, so a bounded apply that only made
   labels left the destination free to move."""
@@ -1459,33 +1442,6 @@ def test_the_wave_skill_records_decision_publication(world):
 
 
 # --------------------------------------------- inspection round 4 regressions
-
-
-def test_a_live_lock_is_never_stolen_on_age(world, monkeypatch):
-  """R4-01: apply holds this lock across network calls, write pacing and
-  60-second rate-limit sleeps, so any age threshold short enough to be useful
-  is short enough to steal a live lock."""
-  applied(world)
-  held = world.artifacts / "handoff_state.lock"
-  held.write_text("99999", encoding="utf-8")
-  old = os.utime(held, (0, 0))  # as old as a file can look
-  code, out = world.run("launch", "--plan", world.plan, "--wave", 1, "--units", "U01")
-  assert code == 1 and "handoff_state.lock" in out
-  assert "pid 99999" in out, out
-  assert held.is_file(), "an ancient lock must still not be taken over"
-  held.unlink()
-
-
-def test_a_lock_is_released_only_by_its_owner(world):
-  """R4-01: the first owner's cleanup must not delete a lock someone else now
-  holds."""
-  lock = world.ns["state_lock"]
-  path = world.artifacts / "handoff_state.lock"
-  with lock(world.artifacts):
-    assert path.is_file()
-    path.write_text("424242", encoding="utf-8")  # someone else's lock now
-  assert path.is_file(), "a lock owned by another process must survive our exit"
-  path.unlink()
 
 
 def test_a_watcher_does_not_undo_a_newer_human_selection(world):
@@ -1590,3 +1546,18 @@ def test_an_answer_does_not_survive_its_question_changing(world):
   # the plan no longer matches the reviewed pair, which is itself correct;
   # the answer must also not count once the question has changed
   assert code == 1 or "open blocking decision U03/D2" in out
+
+
+def test_the_helper_is_single_writer_by_design(world):
+  """Concurrency support was removed rather than fixed: four of the seven high
+  findings across the review rounds existed only because `status --wait` could
+  write while another command ran. `--wait` now only reads."""
+  assert "state_lock" not in world.ns, "the lock must be gone, not reinstated"
+  gh = applied(world)
+  make_pr(gh, 70, "a" * 40, closes=[(REPO, 2)])
+  code, out = world.run("status", "--plan", world.plan, "--wait", 60, "--watch", "U01=70")
+  assert code == 1 and "--wait only watches" in out
+  before = (world.artifacts / "handoff_state.json").read_text(encoding="utf-8")
+  assert world.run("status", "--plan", world.plan, "--wait", 60)[0] == 0
+  after = (world.artifacts / "handoff_state.json").read_text(encoding="utf-8")
+  assert after != before, "a wait still records what it saw, once, when it returns"

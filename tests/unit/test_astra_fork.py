@@ -434,3 +434,25 @@ def test_reviewer_isolation_names_the_adapter_not_the_name() -> None:
     assert "adapter" in flat, path
     assert "omitClaudeMd" in flat, path
     assert "never pass `name`" not in flat, f"{path}: the name rule was cargo-cult"
+
+
+def test_non_convergence_doctrine_is_stated() -> None:
+  """A review that will not converge is evidence about the work, not the review:
+  the next move is a deletion, not another round."""
+  flat = " ".join(PANELS.split())
+  assert "### When it does not converge, change the thing, not the round" in PANELS
+  for text in ("Delete the capability", "Narrow the contract", "Shrink the surface",
+               "a later round that reviews the same code with more conditionals in it "
+               "is the failure",
+               "when a review stops converging, the next move is a deletion, not a patch"):
+    assert text in flat, text
+
+
+def test_the_helper_declares_itself_single_writer() -> None:
+  helper = read("skills/egm-handoff/scripts/egm_handoff.py")
+  assert "single-writer tool" in helper
+  assert "state_lock" not in helper, "concurrency support was removed, not reinstated"
+  for path in ("skills/egm-handoff/SKILL.md", "skills/egm-wave/SKILL.md",
+               "skills/egm-handoff/references/handoff_config.md"):
+    flat = " ".join(read(path).split())
+    assert "single-writer" in flat or "One command at a time" in flat, path
