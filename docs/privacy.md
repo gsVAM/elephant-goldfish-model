@@ -43,8 +43,11 @@ the author's final decision and a one-line reason, which EGM writes without
 quoting any other reviewer), the runner's fixed instructions, any file the
 user's OS account can read that Astra opens inside or outside the repository
 (the read-only sandbox blocks writes, not reads), and the user's Codex
-`AGENTS.md` and memories. The Claude conversation, the Claude reviewers'
-reports and their dispositions rows are not sent.
+`AGENTS.md` and memories. EGM does not put the Claude conversation, the Claude
+reviewers' reports or their dispositions rows in the brief; Astra is told not
+to open them, but it can read them like any other file in the folder (see
+above). Write artifacts outside the repository to keep them out of the folder
+Astra reviews.
 
 The lane runs only after a run card with this notice is shown, and only when
 the claudex-loop runner, the Codex CLI and a Codex login are present. Opt out

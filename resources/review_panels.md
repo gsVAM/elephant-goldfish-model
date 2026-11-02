@@ -59,8 +59,9 @@ Write it, followed by a `What ran` line per lane (`completed` or `not run
 `goldfish_review_report.md`, `consolidated_review_report.md`. A report a
 subagent writes (the synthesizer's, or a directly dispatched reviewer's) has
 no card: prepend the card and the `What ran` lines to that file yourself, right
-after the subagent returns and before you read it further, and pass `RunCard`
-on every `egm-resolve` call, including the ones at the Stage 7 and 9 gates.
+after the subagent returns and before you read it further, and pass `Stage`,
+`Round` (the loop's last round + 1) and `RunCard` on every `egm-resolve` call,
+including the ones at the Stage 7 and 9 gates.
 
 ```text
 EGM run card
@@ -86,10 +87,11 @@ Cell rules:
   elephant's model (`inherit`, from the adapters' `model: inherit`). Unknown:
   `unknown (CLAUDE_CODE_SUBAGENT_MODEL_FORCE=<value> is not a documented
   boolean)`, and pass no per-call `model`; never write `forced` for it.
-- Claude goldfish, effective effort: `CLAUDE_CODE_EFFORT_LEVEL` when set,
-  marked `(forced by CLAUDE_CODE_EFFORT_LEVEL)`; else the requested value when
-  it is not `inherit` and the Agent tool offers an `effort` parameter; else
-  `inherit`. When the user asked for an effort and the tool has no `effort`
+- Claude goldfish, effective effort: `CLAUDE_CODE_EFFORT_LEVEL` when set to
+  `low`, `medium`, `high`, `xhigh` or `max`, marked `(forced by
+  CLAUDE_CODE_EFFORT_LEVEL)`; treat `auto`, unset or empty as not set. Else
+  the requested value when it is not `inherit` and the Agent tool offers an
+  `effort` parameter; else `inherit`. When the user asked for an effort and the tool has no `effort`
   parameter, write `inherit (per-reviewer effort is not available in this
   version)`.
 - Astra: `requested only` before the run. In reports, use `effective_model`

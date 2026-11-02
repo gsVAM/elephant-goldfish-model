@@ -110,6 +110,9 @@ def test_force_flag_uses_claude_boolean_rule() -> None:
           "off when it is unset, empty, `0`, `false`, `no` or `off`") in flat
   assert "Any other value is `unknown`" in flat
   assert "never write `forced`" in flat
+  assert ("`CLAUDE_CODE_EFFORT_LEVEL` when set to `low`, `medium`, `high`, "
+          "`xhigh` or `max`, marked `(forced by CLAUDE_CODE_EFFORT_LEVEL)`; "
+          "treat `auto`, unset or empty as not set") in flat
 
 
 def test_inherit_is_never_passed_per_call() -> None:
@@ -138,7 +141,9 @@ def test_dispositions_are_keyed_by_stage_and_round() -> None:
 def test_run_card_reaches_every_report() -> None:
   flat = " ".join(PANELS.split())
   assert "prepend the card and the `What ran` lines to that file yourself" in flat
-  assert "pass `RunCard` on every `egm-resolve` call" in flat
+  assert ("pass `Stage`, `Round` (the loop's last round + 1) and `RunCard` on "
+          "every `egm-resolve` call, including the ones at the Stage 7 and 9 "
+          "gates") in flat
 
 
 def test_astra_feedback_carries_only_astra_rows() -> None:
@@ -148,10 +153,20 @@ def test_astra_feedback_carries_only_astra_rows() -> None:
   privacy = " ".join(read("docs/privacy.md").split())
   assert "the Claude reviewers' findings are not sent" not in privacy
   assert "rows of the dispositions file for Astra's own earlier findings" in privacy
-  assert ("The Claude conversation, the Claude reviewers' reports and their "
-          "dispositions rows are not sent.") in privacy
+  assert "dispositions rows are not sent" not in privacy
+  assert "nothing of Claude's review goes to OpenAI" not in flat
+  for text in (privacy, flat):
+    assert ("EGM does not put the Claude conversation, the Claude reviewers' "
+            "reports or their dispositions rows in the brief") in text
+    assert "it can read them like any other file in the folder" in text
+    assert "Write artifacts outside the repository" in text
+  assert "keeps both ids (for example `design-2-1 + astra-2-3 (F4)`)" in flat
   resolve = " ".join(read("skills/egm-resolve/SKILL.md").split())
   assert "A `Reason` names no other reviewer's finding" in resolve
+  assert "one row per finding id, from the user's final decision" in resolve
+  assert ("gets one row per id, each naming only its own reviewer, with the "
+          "same Final and Changed lines and a Reason written for that row "
+          "alone") in resolve
 
 
 def test_lane_launch_and_safety_rules() -> None:

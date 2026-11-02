@@ -193,7 +193,7 @@ Interpret the user's action/response as follows:
 2.  Mark the report as resolved (add a `Status: resolved` line at the top).
 3.  **Persist dispositions (fork)**: Write
     `goldfish_dispositions_s[Stage]_r[Round].md` next to the report, one row per
-    finding, from the user's final decision at the gate, never from the AI
+    finding id, from the user's final decision at the gate, never from the AI
     suggestion. Final categories: `fixed` (an edit was applied, including an
     overruled contest or an escalation the user resolved by adding the fact),
     `contested` (the user agreed with the contest, or auto accept bypassed
@@ -211,7 +211,10 @@ Interpret the user's action/response as follows:
     ```
 
     A `Reason` names no other reviewer's finding: on a resumed Astra round the
-    `astra-*` rows go to OpenAI (`resources/astra_lane.md` section 7).
+    `astra-*` rows go to OpenAI (`resources/astra_lane.md` section 7). A merged
+    entry (`design-2-1 + astra-2-3 (F4)`, `astra_lane.md` section 6) gets one
+    row per id, each naming only its own reviewer, with the same Final and
+    Changed lines and a Reason written for that row alone.
 
 4.  **Handoff**: Exit cleanly back to the caller (such as `egm-review-loop`)
     with the count of accepted fixes, contested items, escalated items,
