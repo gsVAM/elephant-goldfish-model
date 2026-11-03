@@ -186,9 +186,14 @@ values filled in. One foreman per in-flight issue, at most 5 at once.
     a worktree under `${TMPDIR:-/tmp}/egm-wave/<handoff-id>/<unit-id>/pr<n>/`,
     the diff from the merge base saved as `pr_<n>_r<r>.diff`, the CI read
     saved as `ci_<n>_r<r>.json`), writes the brief and the launch line, and
-    reports `prepared`. A leftover worktree from an interrupted round is
-    removed when it is clean and no run of it is still `launched`; a dirty
-    one stops with `remove it by hand`.
+    reports `prepared`. **A review worktree lives until the unit lands.**
+    There is no mid-round removal: rounds 9, 10 and 11 of this release's
+    own review each found a way for cleanup to remove a worktree a runner
+    was still reading, so the capability was deleted rather than guarded. A
+    leftover worktree of the same PR from an interrupted round is reused
+    when it is clean and its runner has gone quiet (no file under its run
+    folder changed for 10 minutes); a dirty one stops with `remove it by
+    hand`.
 `status --wait` only reads while it waits and records what it saw once, when
 it returns; it refuses `--watch` and `--confirm-landed`. Record a choice with
 its own `status` call first. The helper is single-writer: never run two
@@ -236,9 +241,10 @@ helper commands at once.
     landed on the base branch, the common case), the review is still valid
     whenever the effective diff is unchanged: fetch the new base tip into
     `refs/egm/base/<n>` (`git -C <repo root> fetch <remote>
-    +<baseRefOid>:refs/egm/base/<n>`), run `git -C <worktree> merge-base
-    refs/egm/base/<n> <reviewed head>`, and compare it with the round's
-    recorded `merge_base`. Equal means the same diff was reviewed: post.
+    +<baseRefOid>:refs/egm/base/<n>`), run `git -C <repo root> merge-base
+    refs/egm/base/<n> refs/egm/pr/<n>` - at the repository root, from the
+    refs `prepare` fetched, never inside the review worktree - and compare it
+    with the round's recorded `merge_base`. Equal means the same diff was reviewed: post.
     Different means the base change reaches the reviewed code: do not post.
     In either do-not-post case say so in one line, record the round as
     `target-moved` with the new triple and merge base, and start the next

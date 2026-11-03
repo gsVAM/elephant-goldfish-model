@@ -651,6 +651,14 @@ class Handoff:
     self.handoff_id = f"{slug}-{self.design_sha[:6]}"
     require_binding(self.artifact_dir, self.handoff_id, self.config["repo"])
     self.state = state if state is not None else load_state(self.artifact_dir)
+    # Repository identity folds case (GitHub does), but the canonical write
+    # list carries the repo as TEXT and its hash is what the owner confirmed.
+    # Once a spelling is confirmed, keep using it everywhere so a case-only
+    # change in the config or remote is the same destination, not a drift.
+    confirmed_repo = ((self.state.get("confirmed") or {}).get("repo")
+                      or self.state.get("repo"))
+    if confirmed_repo and confirmed_repo.lower() == self.config["repo"].lower():
+      self.config["repo"] = confirmed_repo
     if self.state.get("approval") and self.state["approval"].get("design_sha256") != self.design_sha:
       raise HandoffError("design changed since the handoff started: re-run the gate")
     self.check_labels()
@@ -1261,7 +1269,7 @@ def cmd_apply(args):
     raise HandoffError("apply writes to GitHub: run it with --yes only after the user confirmed the dry run")
   if not state.get("confirmed_sha256"):
     raise HandoffError("no confirmed_sha256 in the state: run dry-run and ask the user first")
-  if state.get("repo") != repo:
+  if (state.get("repo") or "").lower() != repo.lower():
     raise HandoffError(f"config repo {repo} differs from the state's {state.get('repo')}: run dry-run again")
   # Before any write: the canonical list carries the gate hashes as values, so
   # an edit the rendered bodies do not show leaves it identical while still
@@ -1562,7 +1570,7 @@ def require_repo(handoff) -> str:
   configured repository is no longer the one those numbers were created on."""
   repo = handoff.config["repo"]
   frozen = (handoff.state.get("confirmed") or {}).get("repo") or handoff.state.get("repo")
-  if frozen and frozen != repo:
+  if frozen and frozen.lower() != repo.lower():
     raise HandoffError(
         f"this handoff was created on {frozen} but the configuration now names "
         f"{repo}: issue and PR numbers are not portable between repositories. "
@@ -1603,7 +1611,7 @@ def require_binding(artifact_dir: Path, handoff_id=None, repo=None) -> None:
         f"{bound_repo}; this design is handoff {handoff_id}. Creation, decision "
         f"and verification records are not transferable: use a new artifact "
         f"directory for the new design. Nothing was changed.")
-  if repo and bound_repo and repo != bound_repo:
+  if repo and bound_repo and repo.lower() != bound_repo.lower():
     raise HandoffError(
         f"{artifact_dir} already created issues on {bound_repo}; the "
         f"configuration now names {repo}. The creation destination is frozen "
@@ -2158,6 +2166,25 @@ def remove_worktree(root: Path, tree: Path) -> None:
   run_git(["worktree", "prune"], root, check=False)
 
 
+QUIET_SECONDS = 10 * 60
+
+
+def runner_quiet(folder, now=None) -> bool:
+  """True when nothing under the run folder has changed for QUIET_SECONDS.
+
+  The runner reconnects and rewrites its files every few minutes while alive,
+  so a folder that has been silent this long belongs to a runner that was
+  killed. Used only to let a round be recorded as not run and, at landing, to
+  let a worktree go; never to fabricate a completed result."""
+  folder = Path(folder)
+  if not folder.exists():
+    return True
+  now = time.time() if now is None else now
+  newest = max((p.stat().st_mtime for p in folder.rglob("*") if p.is_file()),
+               default=folder.stat().st_mtime)
+  return now - newest >= QUIET_SECONDS
+
+
 def cmd_record_launch(args):
   """Record `launched` and the run folder for a round.
 
@@ -2188,6 +2215,17 @@ def cmd_record_launch(args):
                    "status": status, "run_status": status, "at": now_iso()})
   else:
     folder = Path(args.run_folder).expanduser()
+    existing = record.get("run_folder")
+    if existing and Path(existing) != folder:
+      # One round, one launch. Re-pointing a live round at another folder lets
+      # an old completed result be collected in its place (R11-02); a new
+      # launch is a new round.
+      raise HandoffError(
+          f"{args.unit} round {args.round} already recorded launch {existing}; a "
+          f"different folder ({folder}) means a new launch, which is a new round.")
+    if existing:
+      print(f"{args.unit} round {args.round}: launch already recorded ({existing})")
+      return 0
     record.update({"phase": "launched", "run_folder": str(folder),
                    "status": "running", "run_status": "running", "at": now_iso()})
   save_foreman(handoff.artifact_dir, args.unit, data)
@@ -2224,20 +2262,40 @@ def cmd_collect(args):
     result = Path(folder) / "result.json"
     status = (json.loads(read_text(result)) or {}).get("status") if result.is_file() else None
     if status in (None, "running"):
-      raise HandoffError(
-          f"{args.unit} round {args.round} was launched and its runner has not "
-          f"terminated ({result} {'reports running' if status else 'does not exist'}). "
-          f"Skipping its result is fine, but the worktree must survive until the "
-          f"process ends: wait for the completion notice, then collect --not-run.")
+      if not runner_quiet(folder):
+        raise HandoffError(
+            f"{args.unit} round {args.round} was launched and its runner has not "
+            f"terminated ({result} {'reports running' if status else 'does not exist'}, "
+            f"and the run folder changed within the last {QUIET_SECONDS // 60} minutes). "
+            f"Wait for the completion notice, then collect --not-run.")
+      # The folder has been silent long enough: the runner was killed. Record
+      # that honestly, keep the folder, never invent a completed result.
+      record["run_status"] = f"not run (killed: {args.not_run})"
+      record.update({"phase": "collected", "collected_at": now_iso(), "verdict": None})
+      data["phase"] = "collected"
+      save_foreman(handoff.artifact_dir, args.unit, data)
+      print(f"{args.unit} round {args.round}: collected ({record['run_status']}; runner "
+            f"quiet, folder kept)")
+      return 0
   if folder and not args.not_run:
     result = Path(folder) / "result.json"
     if not result.is_file():
       raise HandoffError(f"{result} does not exist: the run has not finished, or record it "
                          f"with --not-run <reason>")
-    status = (json.loads(read_text(result)) or {}).get("status")
+    payload = json.loads(read_text(result)) or {}
+    status = payload.get("status")
     if status != "completed":
       raise HandoffError(f"{result} reports status `{status}`, not `completed`: wait for it, "
                          f"or record it with --not-run <reason>")
+    # The result must be THIS round's: same unit file as --plan, same merge
+    # base as --base. An older run's folder recorded by mistake is refused.
+    expected_plan = str(handoff.unit_file(args.unit))
+    if payload.get("plan") and str(payload["plan"]) != expected_plan:
+      raise HandoffError(f"{result} reviewed {payload['plan']}, not {expected_plan}: it belongs "
+                         f"to a different review")
+    if record.get("merge_base") and payload.get("base") and payload["base"] != record["merge_base"]:
+      raise HandoffError(f"{result} was run with --base {payload['base']}, but this round's merge "
+                         f"base is {record['merge_base']}: it belongs to a different review")
     record["run_status"] = "completed"
   else:
     record["run_status"] = f"not run ({args.not_run})" if args.not_run else "not run"
@@ -2256,7 +2314,7 @@ def cmd_prepare(args):
   state = handoff.state
   root = Path(state.get("repo_root") or handoff.repo_root)
   remote, repo = state.get("remote") or handoff.config["remote"], handoff.config["repo"]
-  if not (args.clean or args.remove):
+  if not args.clean:
     # A review judges the PR against unit_<id>.md, so both the plan AND that
     # file must still be what the gate reviewed. Hashing the plan alone is not
     # enough: the unit file is a separate artefact on disk and is what the
@@ -2287,9 +2345,10 @@ def cmd_prepare(args):
              if v.get("phase") == "launched"
              and v.get("run_status", v.get("status")) == "running"]
   # `collected` is terminal: a collected round never blocks cleanup.
-  if args.clean or args.remove:
-    # Clean up the round that was asked for, on the PR that round reviewed; the
-    # currently watched PR may already be a different one.
+  if args.clean:
+    # Only at landing. There is no mid-round removal any more: a review
+    # worktree lives until the unit lands, so no cleanup can race a runner
+    # that still reads it (rounds 9-11 each found a door to that race).
     this_round = rounds.get(str(args.round)) or {}
     if not this_round.get("pr") or not this_round.get("worktree"):
       raise HandoffError(
@@ -2299,12 +2358,14 @@ def cmd_prepare(args):
           f"prepared, or remove the worktree by hand.")
     number = this_round["pr"]
     tree = Path(this_round["worktree"])
-    blocking = [r for r in running if r == str(args.round)] or \
-        [r for r in running if (rounds[r].get("worktree") or "") == str(tree)]
-    if blocking:
+    blocking = [r for r in running if r == str(args.round)
+                or (rounds[r].get("worktree") or "") == str(tree)]
+    live = [r for r in blocking if not runner_quiet(rounds[r].get("run_folder") or tree)]
+    if live:
       raise HandoffError(
-          f"an inspect run of {args.unit} round {blocking[0]} is still using "
-          f"{tree}: collect or record it as not run before removing")
+          f"an inspect run of {args.unit} round {live[0]} is still using {tree} "
+          f"(its run folder changed within the last {QUIET_SECONDS // 60} minutes): "
+          f"wait for it to finish, or for it to go quiet, before cleaning")
     if tree.resolve() in registered_worktrees(root):
       remove_worktree(root, tree)
     if args.clean:
@@ -2314,7 +2375,7 @@ def cmd_prepare(args):
     foreman["phase"] = "cleaned"
     rounds.setdefault(str(args.round), {})["phase"] = "cleaned"
     save_foreman(handoff.artifact_dir, args.unit, foreman)
-    print(f"{'cleaned' if args.clean else 'removed'} {tree}")
+    print(f"cleaned {tree}")
     return 0
   tree = worktree_path(handoff.handoff_id, args.unit, number)
   if running:
@@ -2345,10 +2406,11 @@ def cmd_prepare(args):
       raise HandoffError(f"worktree {tree} has changes: remove it by hand")
     running = [r for r in foreman.get("rounds", {}).values()
                if r.get("phase") == "launched" and r.get("run_status", r.get("status")) == "running"]
-    if running:
-      raise HandoffError(f"worktree {tree} belongs to a round still `launched`: wait for its "
-                         "runner to terminate, then `collect` that round (with --not-run if "
-                         "its result is to be skipped) before preparing again")
+    live = [r for r in running if not runner_quiet(rounds[r].get("run_folder") or tree)]
+    if live:
+      raise HandoffError(f"worktree {tree} belongs to round {live[0]}, whose runner changed its "
+                         f"run folder within the last {QUIET_SECONDS // 60} minutes: wait for it "
+                         f"to finish, then `collect` that round before preparing again")
     remove_worktree(root, tree)
   tree.parent.mkdir(parents=True, exist_ok=True)
   run_git(["worktree", "add", "--detach", str(tree), pr["head"]], root)
@@ -2466,8 +2528,8 @@ def build_parser():
   p.add_argument("--runner", help="write the inspect launch line for this runner path")
   p.add_argument("--model")
   p.add_argument("--effort")
-  p.add_argument("--remove", action="store_true", help="remove the round's worktree")
-  p.add_argument("--clean", action="store_true", help="remove the worktree, the refs and prune")
+  p.add_argument("--clean", action="store_true",
+                 help="at landing only: remove the round's worktree, its refs, and prune")
   p.set_defaults(func=cmd_prepare)
   return parser
 

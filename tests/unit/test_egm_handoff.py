@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import runpy
+import time
 import subprocess
 import urllib.parse
 import sys
@@ -959,8 +960,8 @@ def test_prepare_fetches_from_the_recorded_remote_into_private_refs(tmp_path, ca
   code, out = harness.run("prepare", "--plan", plan, "--unit", "U01", "--round", 3)
   assert code == 1 and "has changes: remove it by hand" in out
   (tree / "src/a.txt").write_text("base\nchanged\n", encoding="utf-8")
-  code, out = harness.run("prepare", "--plan", plan, "--unit", "U01", "--round", 3, "--remove")
-  assert code == 0 and not tree.exists()
+  code, out = harness.run("prepare", "--plan", plan, "--unit", "U01", "--round", 3)
+  assert code == 0 and tree.exists(), out  # the worktree lives until the unit lands
   # A moved head stops the round.
   state["units"]["U01"]["pr"]["head"] = "0" * 40
   (plan.parent / "handoff_state.json").write_text(json.dumps(state), encoding="utf-8")
@@ -1737,3 +1738,80 @@ def test_a_mixed_case_remote_url_resolves(tmp_path, capsys):
   assert code == 0 and "(remote origin)" in out, out
   state = json.loads((plan.parent / "handoff_state.json").read_text(encoding="utf-8"))
   assert state["remote"] == "origin" and state["repo"] == REPO
+
+
+# ---------------------------------------- round 11: the lifecycle is narrowed
+
+
+def test_there_is_no_mid_round_worktree_removal(world):
+  """Rounds 9, 10 and 11 each found a door to "cleanup removes a worktree a
+  runner still reads". The capability is gone: a review worktree lives until
+  the unit lands, and `--remove` is not a flag."""
+  with pytest.raises(SystemExit) as caught:
+    world.run("prepare", "--plan", world.plan, "--unit", "U01", "--round", 1, "--remove")
+  assert caught.value.code == 2  # argparse: unrecognized arguments: --remove
+
+
+def test_record_launch_is_immutable_per_round(world, tmp_path):
+  """R11-02: re-pointing a live round at another folder let an old result be
+  collected in its place."""
+  applied(world)
+  a, b = tmp_path / "a", tmp_path / "b"; a.mkdir(); b.mkdir()
+  assert world.run("record-launch", "--plan", world.plan, "--unit", "U01",
+                   "--round", 1, "--run-folder", str(a))[0] == 0
+  code, out = world.run("record-launch", "--plan", world.plan, "--unit", "U01",
+                        "--round", 1, "--run-folder", str(a))
+  assert code == 0 and "already recorded" in out
+  code, out = world.run("record-launch", "--plan", world.plan, "--unit", "U01",
+                        "--round", 1, "--run-folder", str(b))
+  assert code == 1 and "a new round" in out, out
+  data = json.loads((world.artifacts / "foreman_U01_state.json").read_text(encoding="utf-8"))
+  assert data["rounds"]["1"]["run_folder"] == str(a)
+
+
+def test_collect_refuses_a_result_from_a_different_review(world, tmp_path):
+  """R11-02: a completed result is accepted only if it reviewed this round's
+  unit file against this round's merge base."""
+  applied(world)
+  folder = tmp_path / "run"; folder.mkdir()
+  assert world.run("record-launch", "--plan", world.plan, "--unit", "U01",
+                   "--round", 1, "--run-folder", str(folder))[0] == 0
+  (folder / "result.json").write_text(json.dumps({"status": "completed",
+                                                  "plan": "/elsewhere/unit_U09.md"}), encoding="utf-8")
+  code, out = world.run("collect", "--plan", world.plan, "--unit", "U01", "--round", 1)
+  assert code == 1 and "different review" in out, out
+
+
+def test_a_killed_runner_can_be_collected_once_its_folder_is_quiet(world, tmp_path):
+  """R11-03: a runner killed after writing `status: running` left every path
+  refusing for ever. Once the folder has been silent for QUIET_SECONDS the
+  round may be recorded as not run (killed), folder kept, nothing invented."""
+  applied(world)
+  folder = tmp_path / "run"; folder.mkdir()
+  assert world.run("record-launch", "--plan", world.plan, "--unit", "U01",
+                   "--round", 1, "--run-folder", str(folder))[0] == 0
+  (folder / "result.json").write_text(json.dumps({"status": "running"}), encoding="utf-8")
+  code, out = world.run("collect", "--plan", world.plan, "--unit", "U01", "--round", 1,
+                        "--not-run", "runner killed")
+  assert code == 1 and "has not terminated" in out, out
+  old = time.time() - 3600
+  for p in [folder, folder / "result.json"]:
+    os.utime(p, (old, old))
+  code, out = world.run("collect", "--plan", world.plan, "--unit", "U01", "--round", 1,
+                        "--not-run", "runner killed")
+  assert code == 0 and "not run (killed: runner killed)" in out, out
+  data = json.loads((world.artifacts / "foreman_U01_state.json").read_text(encoding="utf-8"))
+  assert data["rounds"]["1"]["run_folder"] == str(folder), "the folder is kept"
+  assert data["rounds"]["1"]["phase"] == "collected"
+
+
+def test_binding_checks_fold_repository_case(world):
+  """R11-04: after confirmation, a case-only change to the config or remote is
+  the same repository, not a different frozen destination."""
+  applied(world)
+  (world.repo / ".egm/handoff.json").write_text(
+      json.dumps({"repo": REPO.upper(), "banned_terms": ["(?i)secret-codename"]}), encoding="utf-8")
+  git(["remote", "set-url", "origin", f"https://github.com/{REPO.upper()}.git"], world.repo)
+  code, out = world.run("status", "--plan", world.plan)
+  assert code == 0, out
+  assert state_of(world)["confirmed"]["repo"] == REPO, "the confirmed spelling is kept"
