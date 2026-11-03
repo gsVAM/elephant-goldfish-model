@@ -343,7 +343,9 @@ def check_template(template: str) -> None:
 def find_remote(repo_root: Path, repo: str) -> str:
   for line in run_git(["remote", "-v"], repo_root).splitlines():
     parts = line.split()
-    if len(parts) >= 2 and parse_remote_url(parts[1]) == repo:
+    # GitHub owner and name are case-insensitive: a remote at
+    # Example-Org/WebHooks serves a config that says example-org/webhooks.
+    if len(parts) >= 2 and (parse_remote_url(parts[1]) or "").lower() == repo.lower():
       return parts[0]
   raise HandoffError(f"no remote for {repo} in {repo_root}: add one or fix "
                      "`repo` in `.egm/handoff.json`")
@@ -2170,6 +2172,17 @@ def cmd_record_launch(args):
   rounds = data.setdefault("rounds", {})
   record = rounds.setdefault(str(args.round), {})
   if args.not_run:
+    if record.get("run_folder"):
+      # A launch was recorded: the runner may still be reading its worktree.
+      # Erasing the folder here would hide that from every cleanup guard
+      # (R10-01). Skipping the result is `collect --not-run`, after the
+      # runner has terminated; recording "not run" is only for a round that
+      # never launched.
+      raise HandoffError(
+          f"{args.unit} round {args.round} already recorded a launch "
+          f"({record['run_folder']}); `record-launch --not-run` is for a round "
+          f"that never launched. Wait for the completion notice, then "
+          f"`collect --unit {args.unit} --round {args.round} --not-run <reason>`.")
     status = f"not run ({args.not_run})"
     record.update({"phase": "launched", "run_folder": None,
                    "status": status, "run_status": status, "at": now_iso()})
@@ -2306,11 +2319,12 @@ def cmd_prepare(args):
   tree = worktree_path(handoff.handoff_id, args.unit, number)
   if running:
     raise HandoffError(
-        f"{args.unit} round {running[0]} is still running: collect it, or record "
-        f"it as not run with `record-launch --round {running[0]} --not-run <reason>`, "
-        f"before preparing another round")
+        f"{args.unit} round {running[0]} is still running: wait for its completion "
+        f"notice, then `collect --unit {args.unit} --round {running[0]}` (or "
+        f"`collect ... --not-run <reason>` to skip its result once the runner "
+        f"has terminated), before preparing another round")
   url = run_git(["remote", "get-url", remote], root)
-  if parse_remote_url(url) != repo:
+  if (parse_remote_url(url) or "").lower() != repo.lower():
     raise HandoffError(f"remote {remote} no longer names {repo} ({url.strip()}): refusing to fetch")
   run_git(["fetch", "--no-write-fetch-head", remote,
            f"+refs/pull/{number}/head:refs/egm/pr/{number}",
@@ -2332,8 +2346,9 @@ def cmd_prepare(args):
     running = [r for r in foreman.get("rounds", {}).values()
                if r.get("phase") == "launched" and r.get("run_status", r.get("status")) == "running"]
     if running:
-      raise HandoffError(f"worktree {tree} belongs to a round still `launched`: mark its run folder "
-                         "`not run (killed)` (foreman state) before preparing again")
+      raise HandoffError(f"worktree {tree} belongs to a round still `launched`: wait for its "
+                         "runner to terminate, then `collect` that round (with --not-run if "
+                         "its result is to be skipped) before preparing again")
     remove_worktree(root, tree)
   tree.parent.mkdir(parents=True, exist_ok=True)
   run_git(["worktree", "add", "--detach", str(tree), pr["head"]], root)

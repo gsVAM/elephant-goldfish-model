@@ -229,13 +229,23 @@ helper commands at once.
     headRefOid,baseRefName,baseRefOid`. The target is the triple the round's
     record in `foreman_<id>_state.json` holds (`head`, `base_ref`,
     `base_sha`); a retarget from `main` to a release branch keeps the head
-    and changes the diff, so the head alone is not the identity. If ANY of
-    the three differs from the reviewed triple, do not post: findings, CI
-    and DoD evidence from the old target would land on a different change.
-    Say so in one line, record the round as `target-moved` with the new
-    triple, and start the next round against the current target - a new
-    round on an unchanged head is permitted and expected in that case. Only
-    when the whole triple is unchanged, post
+    and changes the diff, so the head alone is not the identity. If the
+    head or the base *branch* differs from the reviewed triple, do not post:
+    findings, CI and DoD evidence from the old target would land on a
+    different change. If only the base *sha* moved (an unrelated commit
+    landed on the base branch, the common case), the review is still valid
+    whenever the effective diff is unchanged: fetch the new base tip into
+    `refs/egm/base/<n>` (`git -C <repo root> fetch <remote>
+    +<baseRefOid>:refs/egm/base/<n>`), run `git -C <worktree> merge-base
+    refs/egm/base/<n> <reviewed head>`, and compare it with the round's
+    recorded `merge_base`. Equal means the same diff was reviewed: post.
+    Different means the base change reaches the reviewed code: do not post.
+    In either do-not-post case say so in one line, record the round as
+    `target-moved` with the new triple and merge base, and start the next
+    round against the current target - a new round on an unchanged head is
+    permitted and expected then, and ordinary merges to the base branch must
+    never consume a cap round on their own. Only when the head, the base
+    branch and the merge base are unchanged, post
     through the API with the review bound to the reviewed commit:
     `GH_HOST=github.com gh api repos/O/R/pulls/<n>/reviews -f
     commit_id='<full reviewed sha>' -f event=COMMENT -F body=@'<path>'`, one

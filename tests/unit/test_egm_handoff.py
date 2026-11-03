@@ -1707,3 +1707,33 @@ def test_collect_not_run_refuses_while_a_launched_runner_is_alive(world, tmp_pat
   code, out = world.run("collect", "--plan", world.plan, "--unit", "U01", "--round", 1,
                         "--not-run", "skipped by the user")
   assert code == 0 and "not run (skipped by the user)" in out, out
+
+
+def test_record_launch_not_run_cannot_erase_a_recorded_launch(world, tmp_path):
+  """R10-01: nulling the run folder hid a live runner from every cleanup guard."""
+  applied(world)
+  folder = tmp_path / "run"; folder.mkdir()
+  assert world.run("record-launch", "--plan", world.plan, "--unit", "U01",
+                   "--round", 1, "--run-folder", str(folder))[0] == 0
+  code, out = world.run("record-launch", "--plan", world.plan, "--unit", "U01",
+                        "--round", 1, "--not-run", "skipped")
+  assert code == 1 and "already recorded a launch" in out, out
+  data = json.loads((world.artifacts / "foreman_U01_state.json").read_text(encoding="utf-8"))
+  assert data["rounds"]["1"]["run_folder"].endswith("run"), "the folder must survive"
+  assert data["rounds"]["1"]["run_status"] == "running"
+  # a round that never launched may still be recorded not run
+  assert world.run("record-launch", "--plan", world.plan, "--unit", "U01",
+                   "--round", 2, "--not-run", "lane off")[0] == 0
+
+
+def test_a_mixed_case_remote_url_resolves(tmp_path, capsys):
+  """R10-02: find_remote and the pre-fetch recheck compared case-sensitively,
+  rejecting a valid remote before discovery could run."""
+  repo = make_repo(tmp_path / "repo", origin_url="https://github.com/Example-Org/WebHooks.git",
+                   config={"repo": REPO})
+  plan = make_plan(tmp_path / "artifacts", repo)
+  harness = Harness(capsys)
+  code, out = harness.run("graph", "--plan", plan)
+  assert code == 0 and "(remote origin)" in out, out
+  state = json.loads((plan.parent / "handoff_state.json").read_text(encoding="utf-8"))
+  assert state["remote"] == "origin" and state["repo"] == REPO
